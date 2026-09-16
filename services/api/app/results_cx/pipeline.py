@@ -22,6 +22,8 @@ MARKERS = {Domain.BUSINESS_PROCESS: "Business Pass Count",
            Domain.COMPLIANCE: "Compliance Pass Count",
            Domain.MEMBER_EXPERIENCE: "QA Pass Count"}
 OPTIONAL = {"Date of Evaluation"}
+# Export footers ("Total" and the applied-filter note) only populate these columns.
+FOOTER_ALLOWED = {"QA Name", "MaxScore", "Score"} | set(MARKERS.values())
 
 
 class PipelineValidationError(ValueError):
@@ -38,9 +40,8 @@ class Source:
 
 
 def _header(ws) -> tuple[str, ...] | None:
-    if ws.max_row < 1:
-        return None
-    values = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+    # Read-only sheets report max_row as None when the XML has no <dimension>, so probe the row itself.
+    values = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
     if not values or any(not isinstance(v, str) or not v.strip() for v in values):
         return None
     headers = tuple(v.strip() for v in values)
@@ -106,12 +107,13 @@ def _read_rows(source: Source):
     try:
         ws = wb[source.sheet]
         for number, values in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
+            if len(values) > len(source.headers) and any(v is not None for v in values[len(source.headers):]):
+                raise PipelineValidationError("unsupported_structure", f"{source.path.name} row {number}: values beyond the header columns")
             row = dict(zip(source.headers, values))
-            # Export totals, notes, and empty rows have no criterion identity.
-            if all(row.get(k) is None for k in ("AgentNames", "Date of Call", "Questions", "Answers")):
-                yield number, row, False
-            else:
-                yield number, row, True
+            # Export totals, notes, and empty rows carry no identity, question, answer, or feedback.
+            # Any other populated column means evidence, so the row must validate as a criterion row.
+            eligible = any(row.get(k) is not None for k in source.headers if k not in FOOTER_ALLOWED)
+            yield number, row, eligible
     finally:
         wb.close()
 
@@ -161,6 +163,15 @@ def _parsed(source: Source):
         answer = _text(row.get("Answers"), source, number, "Answers")
         if answer.casefold() not in {"yes", "no"}:
             raise PipelineValidationError("invalid_answer", f"{source.path.name} row {number}: Answers must be Yes or No")
+        passed = answer.casefold() == "yes"
+        # The export's own pass flag must agree with the answer; disagreement means a corrupted row.
+        marker_name = MARKERS[source.domain]
+        marker = row.get(marker_name)
+        flag = Decimal(0) if marker is None else _score(marker, source, number, marker_name)
+        if flag not in (0, 1):
+            raise PipelineValidationError("invalid_marker", f"{source.path.name} row {number}: {marker_name} must be blank, 0, or 1")
+        if (flag == 1) != passed:
+            raise PipelineValidationError("answer_marker_conflict", f"{source.path.name} row {number}: Answers disagrees with {marker_name}")
         max_score = _score(row.get("MaxScore"), source, number, "MaxScore")
         score = _score(row.get("Score"), source, number, "Score")
         if score > max_score:
@@ -173,7 +184,7 @@ def _parsed(source: Source):
             evaluation_date = _date(row["Date of Evaluation"], source, number, "Date of Evaluation")
         key = (agent, call_date, qa, leader)
         result = CriterionResult(domain=source.domain, question=row["Questions"], answer=row["Answers"],
-                                 passed=answer.casefold() == "yes", max_score=max_score,
+                                 passed=passed, max_score=max_score,
                                  attained_score=score, evaluator_feedback=feedback if feedback and feedback.strip() else None,
                                  lineage=SourceLineage(source_filename=source.path.name,
                                                        source_sheet=source.sheet, excel_row=number))
@@ -236,7 +247,7 @@ def analyze(evaluations: Iterable[Evaluation]) -> list[Statistic]:
     seen: dict[tuple[Domain, str | None], set[str]] = defaultdict(set)
     for evaluation in evaluations:
         for result in evaluation.criteria:
-            for question in (None, result.question):
+            for question in (None, result.question.strip()):
                 bucket = (result.domain, question)
                 buckets[bucket].append(result)
                 seen[bucket].add(evaluation.internal_id)
@@ -271,11 +282,13 @@ def profile_sources(sources: dict[Domain, Source]) -> list[dict]:
         for _, row, eligible in _read_rows(source):
             physical += 1
             footers += not eligible
+            criterion_rows += eligible
+            if not eligible:
+                continue
             for name, value in row.items():
                 if value is not None and str(value).strip():
                     column_non_null[name] += 1
                     column_unique[name].add(str(value))
-            criterion_rows += eligible
         parsed = list(_parsed(source))
         dates = [key[1] for key, _, _ in parsed]
         evaluation_dates = [evaluation_date for _, evaluation_date, _ in parsed if evaluation_date]
@@ -290,7 +303,9 @@ def profile_sources(sources: dict[Domain, Source]) -> list[dict]:
                          "evaluation_date_range": [min(evaluation_dates).isoformat(), max(evaluation_dates).isoformat()] if evaluation_dates else None,
                          "agent_count": len({key[0] for key, _, _ in parsed}),
                          "distinct_evaluated_calls": len({key for key, _, _ in parsed}),
-                         "criterion_names": sorted({result.question for _, _, result in parsed}),
+                         "criterion_names": sorted({result.question.strip() for _, _, result in parsed}),
+                         "criterion_row_counts": dict(sorted(Counter(result.question.strip() for _, _, result in parsed).items())),
+                         "criteria_per_call": dict(sorted(Counter(Counter(key for key, _, _ in parsed).values()).items())),
                          "answer_distribution": dict(Counter(result.answer.strip().casefold().capitalize() for _, _, result in parsed)),
                          "evaluator_feedback_coverage": str(_rate(sum(bool(result.evaluator_feedback) for _, _, result in parsed), len(parsed)))})
     return profiles
@@ -303,8 +318,12 @@ def write_jsonl(evaluations: Iterable[Evaluation], output_dir: Path | str) -> Pa
     output.mkdir(parents=True, exist_ok=True)
     target = output / "evaluations.jsonl"
     temporary = output / "evaluations.jsonl.tmp"
-    with temporary.open("w", encoding="utf-8") as stream:
-        for evaluation in evaluations:
-            stream.write(evaluation.model_dump_json() + "\n")
+    try:
+        with temporary.open("w", encoding="utf-8") as stream:
+            for evaluation in evaluations:
+                stream.write(evaluation.model_dump_json() + "\n")
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
     temporary.replace(target)
     return target

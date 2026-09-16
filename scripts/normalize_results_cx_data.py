@@ -1,6 +1,7 @@
 """Strict local normalization and aggregate analytics."""
 
 import argparse
+from collections import Counter
 import json
 from pathlib import Path
 import sys
@@ -22,8 +23,11 @@ def main() -> int:
         domains = {domain.value: {"evaluations": len(evaluations),
                                   "criterion_rows": sum(len(s.lineages) for s in stats if s.domain == domain and s.question is None),
                                   "pass_count": sum(s.pass_count for s in stats if s.domain == domain and s.question is None),
-                                  "fail_count": sum(s.fail_count for s in stats if s.domain == domain and s.question is None)}
-                   for domain in sources}
+                                  "fail_count": sum(s.fail_count for s in stats if s.domain == domain and s.question is None),
+                                  # Distribution of criterion rows per evaluation; more than one key means uneven coverage.
+                                  "criteria_per_evaluation": dict(sorted(Counter(
+                                      sum(c.domain == domain for c in e.criteria) for e in evaluations).items()))}
+                   for domain in sorted(sources)}
         print(json.dumps({"normalized_file": str(target), "domains": domains}, indent=2))
     except PipelineValidationError as exc:
         parser.exit(2, f"ResultsCX validation failed: {exc}\n")
