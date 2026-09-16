@@ -1,13 +1,15 @@
 """Deterministic evidence, untrusted provider boundary, and human review."""
 
 from collections import Counter
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
+import threading
 from typing import Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.results_cx.models import Evaluation
 from app.results_cx.pipeline import analyze
@@ -23,9 +25,21 @@ class DiagnosticError(ValueError):
         super().__init__(message)
 
 
+class ProviderOutputError(DiagnosticError):
+    """The reasoning provider returned something the application refused. Not a client fault."""
+
+
+SIGNAL_REFERENCE = "signal"  # The only aggregate citation; it has no evaluation ID.
+
+
 def _id(prefix: str, *parts: str) -> str:
     raw = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return prefix + sha256(raw.encode()).hexdigest()[:24]
+
+
+def _signal_rows(evaluations: list[Evaluation], domain, criterion: str):
+    return [(e.internal_id, c) for e in evaluations for c in e.criteria
+            if c.domain == domain and c.question.strip() == criterion]
 
 
 def detect_signals(evaluations: list[Evaluation]) -> list[PerformanceSignal]:
@@ -37,8 +51,7 @@ def detect_signals(evaluations: list[Evaluation]) -> list[PerformanceSignal]:
     stats = [s for s in analyze(evaluations) if s.question is not None]
     result = []
     for s in stats:
-        rows = [(e.internal_id, c) for e in evaluations for c in e.criteria
-                if c.domain == s.domain and c.question.strip() == s.question]
+        rows = _signal_rows(evaluations, s.domain, s.question)
         result.append(PerformanceSignal(
             signal_id=_id("sig_", s.domain.value, s.question), domain=s.domain,
             criterion=s.question, evaluated_results=s.pass_count + s.fail_count,
@@ -53,8 +66,7 @@ def detect_signals(evaluations: list[Evaluation]) -> list[PerformanceSignal]:
 
 
 def build_bundle(signal: PerformanceSignal, evaluations: list[Evaluation]) -> EvidenceBundle:
-    rows = [(e.internal_id, c) for e in evaluations for c in e.criteria
-            if c.domain == signal.domain and c.question.strip() == signal.criterion]
+    rows = _signal_rows(evaluations, signal.domain, signal.criterion)
     if not rows:
         raise DiagnosticError("ambiguous_evidence", "No criterion records support this signal")
     rows.sort(key=lambda pair: (pair[0], pair[1].lineage.source_filename,
@@ -71,17 +83,23 @@ def build_bundle(signal: PerformanceSignal, evaluations: list[Evaluation]) -> Ev
             sum((c.attained_score for _, c in rows), Decimal(0)) != signal.attained_score_total or
             actual_lineages != stated_lineages):
         raise DiagnosticError("evidence_mismatch", "Signal and criterion records disagree")
-    items = [EvidenceItem(item_id=f"row_{n}", evaluation_id=eid, domain=c.domain,
+    # Item IDs derive from signal, evaluation, and source location, so a citation is unique
+    # across bundles and cannot silently re-point at a different row if the data changes.
+    items = [EvidenceItem(item_id=_id("ev_", signal.signal_id, eid, c.lineage.source_filename,
+                                      c.lineage.source_sheet, str(c.lineage.excel_row)),
+                          evaluation_id=eid, domain=c.domain,
                           criterion=c.question, passed=c.passed, answer=c.answer,
                           max_score=c.max_score, attained_score=c.attained_score,
                           evaluator_feedback=c.evaluator_feedback, source_lineage=c.lineage)
-             for n, (eid, c) in enumerate(rows, 1)]
+             for eid, c in rows]
+    if len({item.item_id for item in items}) != len(items):
+        raise DiagnosticError("ambiguous_evidence", "Evidence rows are not distinguishable")
     return EvidenceBundle(signal=signal, items=items)
 
 
 def validate_references(references: list[EvidenceReference], bundle: EvidenceBundle) -> None:
     valid = {item.item_id: item.evaluation_id for item in bundle.items}
-    valid["signal"] = None  # Aggregate reference; no evaluation ID is possible.
+    valid[SIGNAL_REFERENCE] = None
     seen = set()
     for ref in references:
         if ref.item_id not in valid or ref.evaluation_id != valid[ref.item_id]:
@@ -92,28 +110,63 @@ def validate_references(references: list[EvidenceReference], bundle: EvidenceBun
         seen.add(key)
 
 
-def validate_provider_output(raw: object, bundle: EvidenceBundle) -> DiagnosticHypothesis:
-    try:
-        hypothesis = DiagnosticHypothesis.model_validate(raw)
-    except ValidationError as exc:
-        raise DiagnosticError("invalid_provider_output", "Reasoner returned an invalid hypothesis") from exc
-    if hypothesis.signal_id != bundle.signal.signal_id:
-        raise DiagnosticError("evidence_mismatch", "Reasoner associated a different signal")
-    validate_references(hypothesis.supporting_evidence, bundle)
-    validate_references(hypothesis.conflicting_evidence, bundle)
-    support = {(r.item_id, r.evaluation_id) for r in hypothesis.supporting_evidence}
-    conflict = {(r.item_id, r.evaluation_id) for r in hypothesis.conflicting_evidence}
+def validate_citations(supporting: list[EvidenceReference], conflicting: list[EvidenceReference],
+                       bundle: EvidenceBundle) -> None:
+    validate_references(supporting, bundle)
+    validate_references(conflicting, bundle)
+    support = {(r.item_id, r.evaluation_id) for r in supporting}
+    conflict = {(r.item_id, r.evaluation_id) for r in conflicting}
     if support & conflict:
         raise DiagnosticError("invalid_evidence_reference", "Evidence cannot support and conflict simultaneously")
+
+
+def _untrusted_payload(raw: object) -> object:
+    """Reduce any boundary input to plain data so validation always runs on fresh objects.
+
+    A pre-built model instance (including one from `model_construct` or a subclass) would
+    otherwise pass through `model_validate` unvalidated and stay shared with the caller.
+    """
+    if isinstance(raw, BaseModel):
+        try:
+            return raw.model_dump(mode="python", warnings=False)
+        except Exception:
+            return None
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    return None
+
+
+def validate_provider_output(raw: object, bundle: EvidenceBundle) -> DiagnosticHypothesis:
+    payload = _untrusted_payload(raw)
+    if payload is None:
+        raise ProviderOutputError("invalid_provider_output", "Reasoner returned an invalid hypothesis")
+    try:
+        hypothesis = DiagnosticHypothesis.model_validate(payload)
+    except ValidationError as exc:
+        raise ProviderOutputError("invalid_provider_output", "Reasoner returned an invalid hypothesis") from exc
+    if hypothesis.signal_id != bundle.signal.signal_id:
+        raise ProviderOutputError("evidence_mismatch", "Reasoner associated a different signal")
+    try:
+        validate_citations(hypothesis.supporting_evidence, hypothesis.conflicting_evidence, bundle)
+    except DiagnosticError as exc:
+        raise ProviderOutputError(exc.code, str(exc)) from exc
     return hypothesis
 
 
 class DiagnosticReasoner(Protocol):
+    """Adapter contract. Return a JSON-compatible mapping shaped like `DiagnosticHypothesis`.
+
+    Output is validated by the application regardless of the object type returned.
+    """
+
     async def diagnose(self, evidence_bundle: ProviderEvidenceBundle) -> object: ...
 
 
 class ControlledTestReasoner:
-    """Returns a supplied response verbatim. It performs no causal inference."""
+    """Test double: returns the supplied response verbatim, ignoring the evidence.
+
+    It performs no inference of any kind and must never be installed outside tests.
+    """
 
     def __init__(self, response: object):
         self.response = response
@@ -123,12 +176,18 @@ class ControlledTestReasoner:
 
 
 class DiagnosticService:
+    """Process-local application service. All state is ephemeral and lost on restart."""
+
     def __init__(self, evaluations: list[Evaluation], reasoner: DiagnosticReasoner):
+        ids = Counter(e.internal_id for e in evaluations)
+        if any(count > 1 for count in ids.values()):
+            raise DiagnosticError("duplicate_evaluation", "Evaluation records must have unique internal IDs")
         self.evaluations = evaluations
         self.reasoner = reasoner
         self.signals = {s.signal_id: s for s in detect_signals(evaluations)}
-        self.records: dict[str, DiagnosticRecord] = {}  # Ephemeral, process-local.
-        self.bundles: dict[str, EvidenceBundle] = {}
+        self._records: dict[str, DiagnosticRecord] = {}
+        self._bundles: dict[str, EvidenceBundle] = {}
+        self._lock = threading.Lock()  # Sync review routes run concurrently in a threadpool.
 
     def list_signals(self) -> list[PerformanceSignal]:
         return sorted(self.signals.values(), key=lambda s: (-s.fail_count, -s.fail_rate, s.domain.value, s.criterion))
@@ -151,19 +210,24 @@ class DiagnosticService:
         except DiagnosticError:
             raise
         except Exception as exc:
-            raise DiagnosticError("reasoner_failure", "Reasoning provider failed") from exc
+            raise ProviderOutputError("reasoner_failure", "Reasoning provider failed") from exc
         hypothesis = validate_provider_output(raw, bundle)
-        if hypothesis.hypothesis_id in self.records:
-            raise DiagnosticError("invalid_provider_output", "Hypothesis ID already exists")
-        record = DiagnosticRecord(provider_hypothesis=hypothesis)
-        self.records[hypothesis.hypothesis_id] = record
-        self.bundles[hypothesis.hypothesis_id] = bundle
-        return record
+        with self._lock:
+            if hypothesis.hypothesis_id in self._records:
+                raise ProviderOutputError("invalid_provider_output", "Hypothesis ID already exists")
+            self._records[hypothesis.hypothesis_id] = DiagnosticRecord(provider_hypothesis=hypothesis)
+            self._bundles[hypothesis.hypothesis_id] = bundle
+        return self.get(hypothesis.hypothesis_id)
+
+    def _record(self, hypothesis_id: str) -> DiagnosticRecord:
+        if hypothesis_id not in self._records:
+            raise DiagnosticError("diagnosis_not_found", "Diagnosis was not found")
+        return self._records[hypothesis_id]
 
     def get(self, hypothesis_id: str) -> DiagnosticRecord:
-        if hypothesis_id not in self.records:
-            raise DiagnosticError("diagnosis_not_found", "Diagnosis was not found")
-        return self.records[hypothesis_id]
+        """Snapshot. Mutating the returned object never changes stored state or audit history."""
+        with self._lock:
+            return self._record(hypothesis_id).model_copy(deep=True)
 
     def _event(self, action: str, reviewer_id: str, rationale: str | None = None,
                revision: HumanRevision | None = None) -> ReviewEvent:
@@ -174,58 +238,64 @@ class DiagnosticService:
                            revision=revision)
 
     def approve(self, hypothesis_id: str, reviewer_id: str) -> DiagnosticRecord:
-        record = self.get(hypothesis_id)
-        if record.status not in ("awaiting_review", "revised") or record.revision_approved:
-            raise DiagnosticError("invalid_state_transition", "Diagnosis cannot be approved from this state")
-        record.events.append(self._event("approve", reviewer_id))
-        if record.status == "revised":
-            record.revision_approved = True
-        else:
-            record.status = "approved"
-        return record
+        with self._lock:
+            record = self._record(hypothesis_id)
+            if record.status not in ("awaiting_review", "revised") or record.revision_approved:
+                raise DiagnosticError("invalid_state_transition", "Diagnosis cannot be approved from this state")
+            event = self._event("approve", reviewer_id)
+            record.events.append(event)
+            if record.status == "revised":
+                record.revision_approved = True
+            else:
+                record.status = "approved"
+        return self.get(hypothesis_id)
 
     def reject(self, hypothesis_id: str, reviewer_id: str, rationale: str) -> DiagnosticRecord:
-        record = self.get(hypothesis_id)
-        if record.status != "awaiting_review":
-            raise DiagnosticError("invalid_state_transition", "Diagnosis cannot be rejected from this state")
-        if not rationale.strip():
-            raise DiagnosticError("invalid_review", "Rejection rationale is required")
-        record.events.append(self._event("reject", reviewer_id, rationale))
-        record.status = "rejected"
-        return record
+        with self._lock:
+            record = self._record(hypothesis_id)
+            if record.status != "awaiting_review":
+                raise DiagnosticError("invalid_state_transition", "Diagnosis cannot be rejected from this state")
+            if not rationale.strip():
+                raise DiagnosticError("invalid_review", "Rejection rationale is required")
+            record.events.append(self._event("reject", reviewer_id, rationale))
+            record.status = "rejected"
+        return self.get(hypothesis_id)
 
-    def revise(self, hypothesis_id: str, reviewer_id: str, revision: HumanRevision,
+    def revise(self, hypothesis_id: str, reviewer_id: str, revision: object,
                rationale: str) -> DiagnosticRecord:
-        record = self.get(hypothesis_id)
-        if record.status != "awaiting_review":
-            raise DiagnosticError("invalid_state_transition", "Diagnosis cannot be revised from this state")
-        if not rationale.strip():
-            raise DiagnosticError("invalid_review", "Revision rationale is required")
-        try:
-            revision = HumanRevision.model_validate(revision)
-        except ValidationError as exc:
-            raise DiagnosticError("malformed_revision", "Human revision is invalid") from exc
-        bundle = self.bundles[hypothesis_id]
-        validate_references(revision.supporting_evidence, bundle)
-        validate_references(revision.conflicting_evidence, bundle)
-        if set((r.item_id, r.evaluation_id) for r in revision.supporting_evidence) & set(
-                (r.item_id, r.evaluation_id) for r in revision.conflicting_evidence):
-            raise DiagnosticError("invalid_evidence_reference", "Evidence cannot support and conflict simultaneously")
-        record.events.append(self._event("revise", reviewer_id, rationale, revision))
-        record.human_revision = revision
-        record.status = "revised"
-        return record
+        with self._lock:
+            record = self._record(hypothesis_id)
+            if record.status != "awaiting_review":
+                raise DiagnosticError("invalid_state_transition", "Diagnosis cannot be revised from this state")
+            if not rationale.strip():
+                raise DiagnosticError("invalid_review", "Revision rationale is required")
+            payload = _untrusted_payload(revision)
+            if payload is None:
+                raise DiagnosticError("malformed_revision", "Human revision is invalid")
+            try:
+                validated = HumanRevision.model_validate(payload)
+            except ValidationError as exc:
+                raise DiagnosticError("malformed_revision", "Human revision is invalid") from exc
+            validate_citations(validated.supporting_evidence, validated.conflicting_evidence,
+                               self._bundles[hypothesis_id])
+            record.events.append(self._event("revise", reviewer_id, rationale, validated))
+            record.human_revision = validated
+            record.status = "revised"
+        return self.get(hypothesis_id)
 
     def get_approved_diagnosis(self, hypothesis_id: str) -> ApprovedDiagnosis:
+        """The only path across the future Design boundary."""
         record = self.get(hypothesis_id)
         if record.status == "approved":
-            decision = record.events[-1]
             diagnosis = record.provider_hypothesis
         elif record.status == "revised" and record.revision_approved and record.human_revision:
-            decision = record.events[-1]
             diagnosis = record.human_revision
         else:
             raise DiagnosticError("diagnosis_not_approved", "Diagnosis has not been approved")
+        approvals = [event for event in record.events if event.action == "approve"]
+        if len(approvals) != 1:
+            raise DiagnosticError("diagnosis_not_approved", "Approval record is inconsistent")
+        decision = approvals[0]
         return ApprovedDiagnosis(hypothesis_id=hypothesis_id,
                                  signal_id=record.provider_hypothesis.signal_id,
                                  diagnosis=diagnosis, approved_by=decision.reviewer_id,

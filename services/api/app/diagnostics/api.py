@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .engine import DiagnosticError, DiagnosticService
+from .engine import DiagnosticError, DiagnosticService, ProviderOutputError
 from .models import HumanRevision
 
 
@@ -15,9 +15,13 @@ def service(request: Request) -> DiagnosticService:
 
 
 def http_error(exc: DiagnosticError) -> HTTPException:
-    status = {"signal_not_found": 404, "diagnosis_not_found": 404,
-              "diagnosis_not_approved": 403, "invalid_state_transition": 409,
-              "reasoner_unavailable": 503}.get(exc.code, 422)
+    """Stable code plus short message; never row values, provider text, or tracebacks."""
+    if isinstance(exc, ProviderOutputError):
+        status = 502  # The upstream reasoner failed or returned invalid output; not a client error.
+    else:
+        status = {"signal_not_found": 404, "diagnosis_not_found": 404,
+                  "diagnosis_not_approved": 403, "invalid_state_transition": 409,
+                  "reasoner_unavailable": 503}.get(exc.code, 422)
     return HTTPException(status_code=status, detail={"code": exc.code, "message": str(exc)})
 
 

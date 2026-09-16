@@ -3,7 +3,7 @@ name: M3 checks
 on:
   pull_request:
   push:
-    branches: [main, feat/m2-data-foundation, review/m2-data-foundation, feat/m3-diagnostic-engine]
+    branches: [main, feat/m2-data-foundation, review/m2-data-foundation, feat/m3-diagnostic-engine, review/m3-diagnostic-engine]
 
 jobs:
   checks:
