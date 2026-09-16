@@ -1,13 +1,13 @@
 # CoachLens AI
 
-CoachLens AI is an evidence-driven performance diagnosis and training platform for the ResultsCX x AWS AI competition. Its planned workflow connects QA evidence to quantitative analysis, human-validated diagnosis, selected interventions, practice, and outcome measurement. Milestone 2 adds deterministic local ResultsCX QA ingestion, normalization, and analytics. It does not produce diagnoses.
+CoachLens AI is an evidence-driven performance diagnosis and training platform for the ResultsCX x AWS AI competition. Its planned workflow connects QA evidence to quantitative analysis, human-validated diagnosis, selected interventions, practice, and outcome measurement. Milestone 3 adds deterministic QA signals, evidence bundles, typed diagnostic hypotheses, and human review. It stops before training design.
 
 ## Repository structure
 
 | Path | Purpose |
 | --- | --- |
 | `apps/web` | Minimal Next.js frontend shell |
-| `services/api` | FastAPI service with a health endpoint |
+| `services/api` | FastAPI service with health and M3 diagnostic endpoints |
 | `packages/contracts` | Reserved for future shared contracts |
 | `data/raw` | Local supplied datasets; Git ignores everything under `data/` except the `.gitkeep` markers |
 | `data/processed` | Local normalized JSONL; Git-ignored |
@@ -46,6 +46,7 @@ Open <http://127.0.0.1:8000/health>. Environment variables prefixed `COACHLENS_A
 
 ```bash
 (cd services/api && python -m pytest)
+npm ci --prefix apps/web
 npm --prefix apps/web run lint
 npm --prefix apps/web run typecheck
 npm --prefix apps/web run build
@@ -65,3 +66,7 @@ services/api/.venv/bin/python scripts/normalize_results_cx_data.py --input data/
 Profiling prints aggregates only. Normalization writes confidential row-level JSONL to ignored `data/processed/evaluations.jsonl` and prints domain totals. See [the M2 data guide](docs/results-cx-data-foundation.md) for schema, identity, lineage, analytics definitions, and limits.
 
 See [product spec](docs/product-spec.md) and [architecture](docs/architecture.md) for the intended later system.
+
+## M3 diagnostic engine
+
+The diagnostic API starts with no local QA records. To use ignored M2 output, set `COACHLENS_API_DIAGNOSTIC_EVALUATIONS_PATH=data/processed/evaluations.jsonl` before starting Uvicorn from the repo root. Signal and evidence routes then work; the evidence view minimizes identity but is not anonymized (see the guide's privacy boundary). Diagnosis creation returns 503 until a reasoning provider is injected; the included controlled test reasoner is for tests only. Reviews are held in process memory and disappear on restart. See [the M3 diagnostic guide](docs/m3-diagnostic-engine.md) for semantics, routes, privacy, the review gate, and the future Bedrock adapter point.
