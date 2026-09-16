@@ -9,8 +9,8 @@ CoachLens AI is an evidence-driven performance diagnosis and training platform f
 | `apps/web` | Minimal Next.js frontend shell |
 | `services/api` | FastAPI service with a health endpoint |
 | `packages/contracts` | Reserved for future shared contracts |
-| `data/raw` | Local supplied datasets; Git ignores all contents except `.gitkeep` |
-| `data/processed` | Reserved for derived data; local contents are Git-ignored |
+| `data/raw` | Local supplied datasets; Git ignores everything under `data/` except the `.gitkeep` markers |
+| `data/processed` | Reserved for derived data; likewise Git-ignored |
 | `docs` | Product and architecture notes |
 | `scripts` | Reserved for development utilities |
 
@@ -51,6 +51,6 @@ npm --prefix apps/web run typecheck
 npm --prefix apps/web run build
 ```
 
-Never commit supplied ResultsCX healthcare QA datasets. Keep them under `data/raw`, whose contents are ignored by Git except for the directory marker. Derived files under `data/processed` are also ignored. Do not use `git add -f` on these directories or commit credentials in `.env` files.
+Never commit supplied ResultsCX healthcare QA datasets. Keep them under `data/raw`. Git ignores everything under `data/` (including files placed directly in `data/`) except the `.gitkeep` directory markers, so derived files under `data/processed` are ignored too. Do not use `git add -f` on these directories or commit credentials in `.env` files.
 
 See [product spec](docs/product-spec.md) and [architecture](docs/architecture.md) for the intended later system.

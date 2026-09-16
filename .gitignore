@@ -4,10 +4,12 @@
 !.env.example
 !.env.*.example
 
-# Supplied raw datasets must never enter Git.
-/data/raw/**
+# Supplied datasets and derived data must never enter Git.
+# Everything under data/ is ignored; only the directory markers are tracked.
+/data/**
+!/data/raw/
 !/data/raw/.gitkeep
-/data/processed/**
+!/data/processed/
 !/data/processed/.gitkeep
 
 # Python environments and caches
@@ -20,6 +22,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+build/
+dist/
 
 # Node and Next.js artifacts
 node_modules/

@@ -11,8 +11,6 @@ dependencies = [
   "fastapi>=0.115,<1",
   "pydantic>=2,<3",
   "pydantic-settings>=2,<3",
-  "pandas>=2.2,<4",
-  "openpyxl>=3.1,<4",
   "uvicorn>=0.30,<1",
 ]
 
