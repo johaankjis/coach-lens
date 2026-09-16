@@ -2,6 +2,9 @@
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from app.diagnostics.api import router as diagnostics_router
+from app.diagnostics.engine import DiagnosticError, DiagnosticService
+from app.results_cx.models import Evaluation
 
 from app.config import get_settings
 
@@ -13,6 +16,22 @@ class HealthResponse(BaseModel):
 
 settings = get_settings()
 app = FastAPI(title=settings.title)
+
+
+class UnavailableReasoner:
+    async def diagnose(self, evidence_bundle):
+        raise DiagnosticError("reasoner_unavailable", "No diagnostic reasoning provider is configured")
+
+
+def _local_evaluations() -> list[Evaluation]:
+    path = settings.diagnostic_evaluations_path
+    if path is None:
+        return []
+    return [Evaluation.model_validate_json(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+app.state.diagnostics = DiagnosticService(_local_evaluations(), UnavailableReasoner())
+app.include_router(diagnostics_router)
 
 
 @app.get("/health", response_model=HealthResponse)

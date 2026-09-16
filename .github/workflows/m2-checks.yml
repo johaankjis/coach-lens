@@ -1,9 +1,9 @@
-name: M2 checks
+name: M3 checks
 
 on:
   pull_request:
   push:
-    branches: [main, feat/m2-data-foundation, review/m2-data-foundation]
+    branches: [main, feat/m2-data-foundation, review/m2-data-foundation, feat/m3-diagnostic-engine]
 
 jobs:
   checks:
