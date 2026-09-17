@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CoachLens AI",
-  description: "An evidence-driven performance diagnosis and training platform in development.",
+  title: "Review Workspace | CoachLens AI",
+  description: "Evidence-driven QA diagnosis and human validation.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

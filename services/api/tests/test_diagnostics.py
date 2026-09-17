@@ -77,6 +77,18 @@ def diagnosed():
     return svc, bundle
 
 
+def test_list_hypotheses_returns_signal_scoped_snapshots():
+    svc, bundle = diagnosed()
+    records = svc.list_hypotheses(bundle.signal.signal_id)
+    assert len(records) == 1 and records[0].status == "awaiting_review"
+    records[0].status = "approved"
+    assert svc.get("hyp_1").status == "awaiting_review"
+    other = next(signal for signal in svc.list_signals() if signal.signal_id != bundle.signal.signal_id)
+    assert svc.list_hypotheses(other.signal_id) == []
+    with pytest.raises(DiagnosticError, match="Signal was not found"):
+        svc.list_hypotheses("missing")
+
+
 def revision(bundle, **changes):
     fields = dict(observed_behavioral_defect="Two failed greeting checks", cause_domain="process_gap",
                   performance_dimension="undetermined", explanation="Human reviewer found a process issue.",
@@ -443,11 +455,20 @@ def test_api_aggregate_safe_and_errors():
             assert evidence.status_code == 200
             assert "Person One" not in evidence.text and "synthetic.xlsx" not in evidence.text
             assert "source_lineage" not in evidence.text
+            review_evidence = client.get(f"/diagnostics/signals/{signal.signal_id}/review-evidence")
+            assert review_evidence.status_code == 200
+            assert review_evidence.json()["items"][0]["source_lineage"] == {
+                "source_filename": "synthetic.xlsx", "source_sheet": "Sheet", "excel_row": 2}
+            assert "agent_name" not in review_evidence.text
+            assert client.get(f"/diagnostics/signals/{signal.signal_id}/hypotheses").json() == []
+            assert client.get("/diagnostics/signals/missing/hypotheses").status_code == 404
             assert client.get("/diagnostics/signals/missing/evidence").status_code == 404
             assert client.get("/diagnostics/hypotheses/missing").status_code == 404
             assert client.post("/diagnostics/signals/missing/hypotheses").status_code == 404
             created = client.post(f"/diagnostics/signals/{signal.signal_id}/hypotheses")
             assert created.status_code == 201
+            listed = client.get(f"/diagnostics/signals/{signal.signal_id}/hypotheses")
+            assert [item["provider_hypothesis"]["hypothesis_id"] for item in listed.json()] == ["hyp_1"]
             assert "status" not in created.json()["provider_hypothesis"]
             duplicate = client.post(f"/diagnostics/signals/{signal.signal_id}/hypotheses")
             assert duplicate.status_code == 502 and duplicate.json()["detail"]["code"] == "invalid_provider_output"

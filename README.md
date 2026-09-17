@@ -1,13 +1,13 @@
 # CoachLens AI
 
-CoachLens AI is an evidence-driven performance diagnosis and training platform for the ResultsCX x AWS AI competition. Its planned workflow connects QA evidence to quantitative analysis, human-validated diagnosis, selected interventions, practice, and outcome measurement. Milestone 3 adds deterministic QA signals, evidence bundles, typed diagnostic hypotheses, and human review. It stops before training design.
+CoachLens AI is an evidence-driven performance diagnosis and training platform for the ResultsCX x AWS AI competition. Its planned workflow connects QA evidence to quantitative analysis, human-validated diagnosis, selected interventions, practice, and outcome measurement. Milestone 4 exposes M2 QA signals and M3 diagnoses in a human review workspace. It stops at Ready for Design.
 
 ## Repository structure
 
 | Path | Purpose |
 | --- | --- |
-| `apps/web` | Minimal Next.js frontend shell |
-| `services/api` | FastAPI service with health and M3 diagnostic endpoints |
+| `apps/web` | Next.js diagnostic review workspace |
+| `services/api` | FastAPI service with health and diagnostic endpoints |
 | `packages/contracts` | Reserved for future shared contracts |
 | `data/raw` | Local supplied datasets; Git ignores everything under `data/` except the `.gitkeep` markers |
 | `data/processed` | Local normalized JSONL; Git-ignored |
@@ -16,7 +16,7 @@ CoachLens AI is an evidence-driven performance diagnosis and training platform f
 
 ## Prerequisites
 
-- Node.js 20.9 or newer and npm
+- Node.js 22.12 or newer and npm (required by frontend test tooling)
 - Python 3.11 or newer
 
 ## Frontend
@@ -49,6 +49,7 @@ Open <http://127.0.0.1:8000/health>. Environment variables prefixed `COACHLENS_A
 npm ci --prefix apps/web
 npm --prefix apps/web run lint
 npm --prefix apps/web run typecheck
+npm --prefix apps/web run test
 npm --prefix apps/web run build
 ```
 
@@ -66,6 +67,10 @@ services/api/.venv/bin/python scripts/normalize_results_cx_data.py --input data/
 Profiling prints aggregates only. Normalization writes confidential row-level JSONL to ignored `data/processed/evaluations.jsonl` and prints domain totals. See [the M2 data guide](docs/results-cx-data-foundation.md) for schema, identity, lineage, analytics definitions, and limits.
 
 See [product spec](docs/product-spec.md) and [architecture](docs/architecture.md) for the intended later system.
+
+## M4 review workspace
+
+The frontend runs at <http://localhost:3000> and proxies `/api/diagnostics/*` to the local FastAPI service at `http://127.0.0.1:8000` (override with `COACHLENS_API_ORIGIN`). For a safe end-to-end demo using **synthetic** QA records and a **fixed non-AI fixture**, run `PYTHONPATH=services/api services/api/.venv/bin/python scripts/run_m4_demo.py` from the repository root, then `npm --prefix apps/web run dev`. Demo hypotheses still pass through M3 validation and review transitions. See [the M4 guide](docs/m4-review-workspace.md) for the flow, privacy boundary, API additions, and limits.
 
 ## M3 diagnostic engine
 

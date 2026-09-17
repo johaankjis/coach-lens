@@ -1,0 +1,1272 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import {
+  api,
+  ApiError,
+  label,
+  shortId,
+  validated,
+  type Diagnosis,
+  type EvidenceBundle,
+  type EvidenceItem,
+  type EvidenceReference,
+  type RecordState,
+  type Signal,
+} from "../lib/diagnostics";
+
+const signalPath = (id: string) => `/signals/${encodeURIComponent(id)}`;
+const hypothesisPath = (id: string) => `/hypotheses/${encodeURIComponent(id)}`;
+const percent = (value: string) => `${(Number(value) * 100).toFixed(1)}%`;
+const refKey = (reference: EvidenceReference) => reference.item_id;
+
+function relation(
+  reference: EvidenceReference,
+  record: Diagnosis | null,
+): "supporting" | "conflicting" | "uncited" {
+  if (
+    record?.supporting_evidence.some(
+      (item) => refKey(item) === refKey(reference),
+    )
+  )
+    return "supporting";
+  if (
+    record?.conflicting_evidence.some(
+      (item) => refKey(item) === refKey(reference),
+    )
+  )
+    return "conflicting";
+  return "uncited";
+}
+
+function EvidenceLink({
+  reference,
+  relationName,
+  onSelect,
+}: {
+  reference: EvidenceReference;
+  relationName: string;
+  onSelect: (reference: EvidenceReference) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="evidence-link"
+      onClick={() => onSelect(reference)}
+    >
+      <span>
+        {reference.item_id === "signal"
+          ? "Aggregate QA signal"
+          : `Evaluation ${shortId(reference.evaluation_id ?? "")}`}
+      </span>
+      <span className="evidence-link-meta">
+        {relationName} <span aria-hidden="true">↗</span>
+      </span>
+    </button>
+  );
+}
+
+function EvidenceGroup({
+  title,
+  references,
+  kind,
+  onSelect,
+}: {
+  title: string;
+  references: EvidenceReference[];
+  kind: string;
+  onSelect: (reference: EvidenceReference) => void;
+}) {
+  return (
+    <section className={`evidence-group ${kind}`} aria-label={title}>
+      <div className="evidence-group-heading">
+        <h4>{title}</h4>
+        <span>{references.length}</span>
+      </div>
+      {references.length ? (
+        <div className="evidence-links">
+          {references.map((reference) => (
+            <EvidenceLink
+              key={reference.item_id}
+              reference={reference}
+              relationName={kind}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="quiet">None cited in this diagnosis.</p>
+      )}
+    </section>
+  );
+}
+
+function DiagnosisBody({
+  diagnosis,
+  confidence,
+  demo = false,
+  onSelect,
+}: {
+  diagnosis: Diagnosis;
+  confidence?: string;
+  demo?: boolean;
+  onSelect: (reference: EvidenceReference) => void;
+}) {
+  return (
+    <>
+      <div className="diagnosis-fields">
+        <div>
+          <span className="field-label">Proposed cause</span>
+          <strong>{label(diagnosis.cause_domain)}</strong>
+        </div>
+        <div>
+          <span className="field-label">Performance dimension</span>
+          <strong>{label(diagnosis.performance_dimension)}</strong>
+        </div>
+      </div>
+      <div className="reasoning">
+        <span className="field-label">Reasoning / explanation</span>
+        <p>{diagnosis.explanation}</p>
+      </div>
+      {confidence !== undefined && (
+        <div className="confidence">
+          <div>
+            <span className="field-label">
+              {demo ? "Fixture confidence value" : "Model-reported confidence"}
+            </span>
+            <strong>{confidence}</strong>
+          </div>
+          <p>
+            {demo
+              ? "Fixed synthetic fixture value. No model reported it."
+              : "Provider self-report for this hypothesis."}{" "}
+            It is not a statistically calibrated probability.
+          </p>
+        </div>
+      )}
+      <div className="evidence-pair">
+        <EvidenceGroup
+          title="Supporting evidence"
+          references={diagnosis.supporting_evidence}
+          kind="supporting"
+          onSelect={onSelect}
+        />
+        <EvidenceGroup
+          title="Conflicting evidence"
+          references={diagnosis.conflicting_evidence}
+          kind="conflicting"
+          onSelect={onSelect}
+        />
+      </div>
+      <div className="missing">
+        <h4>Missing evidence / unanswered questions</h4>
+        {diagnosis.missing_evidence.length ? (
+          <ul>
+            {diagnosis.missing_evidence.map((item, index) => (
+              <li key={index}>{item}</li>
+            ))}
+          </ul>
+        ) : (
+          <p>None recorded by the reasoner.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+function RevisionForm({
+  original,
+  bundle,
+  reviewer,
+  onCancel,
+  onSubmit,
+  busy,
+}: {
+  original: Diagnosis;
+  bundle: EvidenceBundle | null;
+  reviewer: string;
+  onCancel: () => void;
+  onSubmit: (revision: Diagnosis, rationale: string) => void;
+  busy: boolean;
+}) {
+  const [draft, setDraft] = useState<Diagnosis>(() => ({
+    ...original,
+    supporting_evidence: [...original.supporting_evidence],
+    conflicting_evidence: [...original.conflicting_evidence],
+    missing_evidence: [...original.missing_evidence],
+  }));
+  const [rationale, setRationale] = useState("");
+  const update = <K extends keyof Diagnosis>(field: K, value: Diagnosis[K]) =>
+    setDraft((current) => ({ ...current, [field]: value }));
+  const allReferences: EvidenceReference[] = [
+    { item_id: "signal", evaluation_id: null },
+    ...(bundle?.items.map((item) => ({
+      item_id: item.item_id,
+      evaluation_id: item.evaluation_id,
+    })) ?? []),
+  ];
+  const setRelation = (reference: EvidenceReference, next: string) =>
+    setDraft((current) => ({
+      ...current,
+      supporting_evidence: [
+        ...current.supporting_evidence.filter(
+          (item) => item.item_id !== reference.item_id,
+        ),
+        ...(next === "supporting" ? [reference] : []),
+      ],
+      conflicting_evidence: [
+        ...current.conflicting_evidence.filter(
+          (item) => item.item_id !== reference.item_id,
+        ),
+        ...(next === "conflicting" ? [reference] : []),
+      ],
+    }));
+  return (
+    <form
+      className="revision-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit(draft, rationale);
+      }}
+    >
+      <div className="section-title">
+        <span className="eyebrow">Human correction</span>
+        <h3>Revise diagnosis</h3>
+        <p>
+          The original AI proposal remains in the record. This revision will
+          need a separate approval.
+        </p>
+      </div>
+      <label>
+        Observed behavioral defect{" "}
+        <textarea
+          required
+          value={draft.observed_behavioral_defect}
+          onChange={(event) =>
+            update("observed_behavioral_defect", event.target.value)
+          }
+        />
+      </label>
+      <div className="form-grid">
+        <label>
+          Corrected cause{" "}
+          <select
+            value={draft.cause_domain}
+            onChange={(event) => update("cause_domain", event.target.value)}
+          >
+            {["knowledge_gap", "skill_gap", "process_gap", "undetermined"].map(
+              (value) => (
+                <option key={value} value={value}>
+                  {label(value)}
+                </option>
+              ),
+            )}
+          </select>
+        </label>
+        <label>
+          Corrected dimension{" "}
+          <select
+            value={draft.performance_dimension}
+            onChange={(event) =>
+              update("performance_dimension", event.target.value)
+            }
+          >
+            {["capability", "execution", "undetermined"].map((value) => (
+              <option key={value} value={value}>
+                {label(value)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label>
+        Corrected explanation{" "}
+        <textarea
+          required
+          value={draft.explanation}
+          onChange={(event) => update("explanation", event.target.value)}
+        />
+      </label>
+      <fieldset>
+        <legend>Evidence relationships</legend>
+        <p className="quiet">
+          Keep at least one supporting reference. The backend validates every
+          citation.
+        </p>
+        <div className="revision-evidence">
+          {allReferences.map((reference) => (
+            <label key={reference.item_id}>
+              <span>
+                {reference.item_id === "signal"
+                  ? "Aggregate QA signal"
+                  : `Evaluation ${shortId(reference.evaluation_id ?? "")}`}
+              </span>
+              <select
+                aria-label={`Evidence relationship for ${reference.item_id}`}
+                value={relation(reference, draft)}
+                onChange={(event) => setRelation(reference, event.target.value)}
+              >
+                <option value="uncited">Uncited</option>
+                <option value="supporting">Supporting</option>
+                <option value="conflicting">Conflicting</option>
+              </select>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <label>
+        Missing evidence / unanswered questions{" "}
+        <textarea
+          value={draft.missing_evidence.join("\n")}
+          onChange={(event) =>
+            update(
+              "missing_evidence",
+              event.target.value
+                .split("\n")
+                .map((line) => line.trim())
+                .filter(Boolean),
+            )
+          }
+        />
+        <span className="input-help">
+          One item per line. Required if cause is Undetermined.
+        </span>
+      </label>
+      <label>
+        Reason for revision{" "}
+        <textarea
+          required
+          value={rationale}
+          onChange={(event) => setRationale(event.target.value)}
+        />
+      </label>
+      <div className="form-actions">
+        <button type="button" className="button secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="button primary"
+          disabled={
+            busy || !reviewer.trim() || !draft.supporting_evidence.length
+          }
+        >
+          Save revision
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export default function ReviewWorkspace() {
+  const [signals, setSignals] = useState<Signal[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [bundle, setBundle] = useState<EvidenceBundle | null>(null);
+  const [records, setRecords] = useState<RecordState[]>([]);
+  const [recordId, setRecordId] = useState<string | null>(null);
+  const [selectedEvidence, setSelectedEvidence] =
+    useState<EvidenceReference | null>(null);
+  const [reviewer, setReviewer] = useState("");
+  const [rationale, setRationale] = useState("");
+  const [action, setAction] = useState<"reject" | "revise" | null>(null);
+  const [loadingSignals, setLoadingSignals] = useState(true);
+  const [loadingSignal, setLoadingSignal] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [signalError, setSignalError] = useState<string | null>(null);
+  const selectedSignal =
+    signals.find((signal) => signal.signal_id === selectedId) ?? null;
+  const record =
+    records.find(
+      (entry) => entry.provider_hypothesis.hypothesis_id === recordId,
+    ) ?? null;
+  const isDemo =
+    record?.provider_hypothesis.provider_metadata.provider ===
+    "m4-demo-fixture";
+  const currentDiagnosis =
+    record?.human_revision ?? record?.provider_hypothesis ?? null;
+  const evidenceItem: EvidenceItem | undefined = bundle?.items.find(
+    (item) => item.item_id === selectedEvidence?.item_id,
+  );
+
+  const loadSignals = useCallback(async () => {
+    try {
+      const result = await api<Signal[]>("/signals");
+      setSignals(result);
+      setLoadingSignal(true);
+      setSelectedId((current) =>
+        result.some((signal) => signal.signal_id === current)
+          ? current
+          : (result[0]?.signal_id ?? null),
+      );
+    } catch (cause) {
+      setError((cause as Error).message);
+      setSignals([]);
+      setSelectedId(null);
+    } finally {
+      setLoadingSignals(false);
+    }
+  }, []);
+  useEffect(() => {
+    void Promise.resolve().then(loadSignals);
+  }, [loadSignals]);
+  useEffect(() => {
+    if (!selectedId) return;
+    let cancelled = false;
+    Promise.all([
+      api<EvidenceBundle>(`${signalPath(selectedId)}/review-evidence`),
+      api<RecordState[]>(`${signalPath(selectedId)}/hypotheses`),
+    ])
+      .then(([evidence, hypotheses]) => {
+        if (cancelled) return;
+        setBundle(evidence);
+        setRecords(hypotheses);
+        setRecordId(hypotheses[0]?.provider_hypothesis.hypothesis_id ?? null);
+      })
+      .catch((cause) => {
+        if (!cancelled) setSignalError((cause as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSignal(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
+  async function refreshRecord(id: string) {
+    const latest = await api<RecordState>(hypothesisPath(id));
+    setRecords((current) =>
+      current.map((item) =>
+        item.provider_hypothesis.hypothesis_id === id ? latest : item,
+      ),
+    );
+  }
+  async function generate() {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await api<RecordState>(
+        `${signalPath(selectedId)}/hypotheses`,
+        { method: "POST" },
+      );
+      setRecords((current) => [created, ...current]);
+      setRecordId(created.provider_hypothesis.hypothesis_id);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function mutate(
+    kind: "approve" | "reject" | "revise",
+    revision?: Diagnosis,
+    revisionRationale?: string,
+  ) {
+    if (!record || !reviewer.trim()) return;
+    const id = record.provider_hypothesis.hypothesis_id;
+    setBusy(true);
+    setError(null);
+    try {
+      const body =
+        kind === "revise"
+          ? {
+              reviewer_id: reviewer.trim(),
+              rationale: revisionRationale,
+              revision,
+            }
+          : kind === "reject"
+            ? { reviewer_id: reviewer.trim(), rationale }
+            : { reviewer_id: reviewer.trim() };
+      const latest = await api<RecordState>(`${hypothesisPath(id)}/${kind}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      setRecords((current) =>
+        current.map((item) =>
+          item.provider_hypothesis.hypothesis_id === id ? latest : item,
+        ),
+      );
+      setAction(null);
+      setRationale("");
+    } catch (cause) {
+      setError((cause as Error).message);
+      if (cause instanceof ApiError && cause.status === 409) {
+        try {
+          await refreshRecord(id);
+        } catch {
+          /* Keep the error visible. */
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            C<span>●</span>
+          </span>
+          <div>
+            <strong>
+              CoachLens <em>AI</em>
+            </strong>
+            <span>Evidence-Driven Performance Diagnosis</span>
+          </div>
+        </div>
+        <div className="topbar-right">
+          <span className="workspace-label">REVIEW WORKSPACE</span>
+          <span className="milestone">MILESTONE 04</span>
+        </div>
+      </header>
+      <main className="workspace">
+        <div className="workspace-heading">
+          <div>
+            <span className="eyebrow">Human diagnostic validation</span>
+            <h1>From QA evidence to a reviewed diagnosis.</h1>
+            <p>
+              Inspect the observation, challenge the hypothesis, and record the
+              human decision.
+            </p>
+          </div>
+          <div className="flow-pill">
+            <span>
+              01 <b>Observed</b>
+            </span>
+            <i>→</i>
+            <span>
+              02 <b>Proposed</b>
+            </span>
+            <i>→</i>
+            <span>
+              03 <b>Validated</b>
+            </span>
+          </div>
+        </div>
+        {error && (
+          <div role="alert" className="banner error">
+            <strong>Action needed</strong>
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              aria-label="Dismiss error"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        <div className="workspace-grid">
+          <aside className="signal-nav" aria-label="Observed QA signals">
+            <div className="rail-heading">
+              <span className="eyebrow">01 / Source QA result</span>
+              <h2>Observed signals</h2>
+              <p>Deterministic M2 counts from validated QA records.</p>
+            </div>
+            {loadingSignals ? (
+              <p role="status" className="state-copy">
+                Loading QA signals…
+              </p>
+            ) : !signals.length ? (
+              <div className="empty-rail">
+                <p>No QA signals are available.</p>
+                <span>Load normalized evaluations in the API to begin.</span>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    setLoadingSignals(true);
+                    setError(null);
+                    void loadSignals();
+                  }}
+                >
+                  Retry connection ↗
+                </button>
+              </div>
+            ) : (
+              <div className="signal-list">
+                {signals.map((signal) => (
+                  <button
+                    type="button"
+                    key={signal.signal_id}
+                    className={`signal-row ${selectedId === signal.signal_id ? "selected" : ""}`}
+                    onClick={() => {
+                      if (signal.signal_id !== selectedId) {
+                        setLoadingSignal(true);
+                        setSignalError(null);
+                        setBundle(null);
+                        setRecords([]);
+                        setRecordId(null);
+                        setSelectedEvidence(null);
+                        setAction(null);
+                        setSelectedId(signal.signal_id);
+                      }
+                      setError(null);
+                    }}
+                    aria-current={
+                      selectedId === signal.signal_id ? "true" : undefined
+                    }
+                  >
+                    <span className="signal-domain">
+                      {label(signal.domain)}
+                    </span>
+                    <strong>{signal.criterion}</strong>
+                    <span className="signal-metrics">
+                      <b>
+                        {signal.fail_count}/{signal.evaluated_results}
+                      </b>{" "}
+                      failed <span>{percent(signal.fail_rate)}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="rail-foot">
+              Source answers and pass markers are interpreted by M2. This
+              workspace does not rescore them.
+            </div>
+          </aside>
+
+          <section className="review-main" aria-label="Diagnostic review">
+            {!selectedSignal ? (
+              <div className="main-empty">
+                Select an observed QA signal to begin review.
+              </div>
+            ) : (
+              <>
+                <section className="observation">
+                  <div className="section-kicker">
+                    <span className="level-dot observed-dot" /> OBSERVED ·
+                    DETERMINISTIC QA SIGNAL
+                  </div>
+                  <div className="observation-head">
+                    <div>
+                      <span className="domain-tag">
+                        {label(selectedSignal.domain)}
+                      </span>
+                      <h2>{selectedSignal.criterion}</h2>
+                    </div>
+                    <div className="observed-rate">
+                      <strong>{percent(selectedSignal.fail_rate)}</strong>
+                      <span>observed failure rate</span>
+                    </div>
+                  </div>
+                  <div className="observation-facts">
+                    <div>
+                      <b>
+                        {selectedSignal.fail_count} of{" "}
+                        {selectedSignal.evaluated_results}
+                      </b>
+                      <span>criterion results failed</span>
+                    </div>
+                    <div>
+                      <b>{selectedSignal.evaluated_evaluations}</b>
+                      <span>evaluations represented</span>
+                    </div>
+                    <div>
+                      <b>{selectedSignal.feedback_count}</b>
+                      <span>records contain feedback</span>
+                    </div>
+                  </div>
+                  <p className="source-note">
+                    These are structured source QA results calculated by M2.
+                    They do not establish why the behavior occurred.
+                  </p>
+                </section>
+                {loadingSignal ? (
+                  <div role="status" className="loading-panel">
+                    Loading evidence and review history…
+                  </div>
+                ) : signalError ? (
+                  <div role="alert" className="empty-panel">
+                    <h3>Evidence unavailable</h3>
+                    <p>{signalError}</p>
+                    <button
+                      className="button secondary"
+                      onClick={() => setSelectedId(null)}
+                    >
+                      Choose another signal
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <section className="lineage" aria-label="Evidence lineage">
+                      <div className="section-title">
+                        <span className="eyebrow">
+                          Evidence graph / provenance
+                        </span>
+                        <h3>Trace the decision</h3>
+                      </div>
+                      <div className="lineage-track">
+                        <div>
+                          <span>Source evidence</span>
+                          <strong>
+                            {bundle?.items.length ?? 0} criterion rows
+                          </strong>
+                        </div>
+                        <i>→</i>
+                        <div>
+                          <span>Performance signal</span>
+                          <strong>{selectedSignal.criterion}</strong>
+                        </div>
+                        <i>→</i>
+                        <div>
+                          <span>Diagnostic hypothesis</span>
+                          <strong>
+                            {record ? "AI proposed" : "Not requested"}
+                          </strong>
+                        </div>
+                        <i>→</i>
+                        <div>
+                          <span>Human validation</span>
+                          <strong>
+                            {record && validated(record)
+                              ? "Approved"
+                              : record?.status === "rejected"
+                                ? "Rejected"
+                                : "Pending"}
+                          </strong>
+                        </div>
+                      </div>
+                    </section>
+                    {records.length > 1 && (
+                      <div className="history-selector">
+                        <label htmlFor="hypothesis-select">
+                          Review history
+                        </label>
+                        <select
+                          id="hypothesis-select"
+                          value={recordId ?? ""}
+                          onChange={(event) => {
+                            setRecordId(event.target.value);
+                            setSelectedEvidence(null);
+                            setAction(null);
+                          }}
+                        >
+                          {records.map((entry) => (
+                            <option
+                              key={entry.provider_hypothesis.hypothesis_id}
+                              value={entry.provider_hypothesis.hypothesis_id}
+                            >
+                              {shortId(entry.provider_hypothesis.hypothesis_id)}{" "}
+                              ·{" "}
+                              {entry.status === "revised" &&
+                              entry.revision_approved
+                                ? "Revised and approved"
+                                : label(entry.status)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {!record ? (
+                      <section className="empty-panel">
+                        <span className="eyebrow">
+                          02 / Diagnostic hypothesis
+                        </span>
+                        <h3>No hypothesis for this signal yet.</h3>
+                        <p>
+                          Review the source evidence, then request a diagnostic
+                          hypothesis through the M3 reasoning workflow. A
+                          provider must be configured.
+                        </p>
+                        <button
+                          type="button"
+                          className="button primary"
+                          onClick={() => void generate()}
+                          disabled={busy}
+                        >
+                          {busy
+                            ? "Generating hypothesis…"
+                            : "Request diagnostic hypothesis"}
+                        </button>
+                      </section>
+                    ) : (
+                      <>
+                        <section className="hypothesis">
+                          <div className="section-kicker">
+                            <span className="level-dot proposed-dot" />{" "}
+                            {isDemo
+                              ? "CONTROLLED DEMO · DIAGNOSTIC HYPOTHESIS"
+                              : "AI-GENERATED · DIAGNOSTIC HYPOTHESIS"}
+                          </div>
+                          {isDemo && (
+                            <div className="demo-notice">
+                              Synthetic demo hypothesis. The fixture performs no
+                              AI inference.
+                            </div>
+                          )}
+                          <div className="hypothesis-head">
+                            <div>
+                              <span className="eyebrow">
+                                Provider proposal ·{" "}
+                                {shortId(
+                                  record.provider_hypothesis.hypothesis_id,
+                                )}
+                              </span>
+                              <h2>
+                                {record.status === "rejected"
+                                  ? "Rejected diagnosis"
+                                  : validated(record)
+                                    ? "Reviewed hypothesis"
+                                    : "Awaiting human validation"}
+                              </h2>
+                            </div>
+                            <span
+                              className={`status-badge ${validated(record) ? "validated" : record.status === "rejected" ? "rejected" : "pending"}`}
+                            >
+                              {validated(record)
+                                ? "HUMAN VALIDATED"
+                                : record.status === "rejected"
+                                  ? "REJECTED"
+                                  : "NOT YET VALIDATED"}
+                            </span>
+                          </div>
+                          <div className="behavior">
+                            <span className="field-label">
+                              {isDemo
+                                ? "Fixture description of observed behavior"
+                                : "AI description of observed behavior"}
+                            </span>
+                            <p>
+                              {
+                                record.provider_hypothesis
+                                  .observed_behavioral_defect
+                              }
+                            </p>
+                          </div>
+                          {record.human_revision && (
+                            <div className="revision-separation">
+                              <span>ORIGINAL AI PROPOSAL · PRESERVED</span>
+                              <p>
+                                The proposal below remains part of the audit
+                                history. The reviewer’s correction follows
+                                separately.
+                              </p>
+                            </div>
+                          )}
+                          <DiagnosisBody
+                            diagnosis={record.provider_hypothesis}
+                            confidence={
+                              record.provider_hypothesis
+                                .provider_reported_confidence
+                            }
+                            demo={isDemo}
+                            onSelect={setSelectedEvidence}
+                          />
+                          <div className="provider-meta">
+                            Provider:{" "}
+                            {
+                              record.provider_hypothesis.provider_metadata
+                                .provider
+                            }
+                            {record.provider_hypothesis.provider_metadata.model
+                              ? ` · ${record.provider_hypothesis.provider_metadata.model}`
+                              : ""}
+                          </div>
+                        </section>
+                        {record.human_revision && (
+                          <section className="human-revision">
+                            <div className="section-kicker">
+                              <span className="level-dot human-dot" /> HUMAN
+                              REVISION ·{" "}
+                              {record.revision_approved
+                                ? "APPROVED"
+                                : "PENDING APPROVAL"}
+                            </div>
+                            <h2>Reviewer correction</h2>
+                            <div className="behavior">
+                              <span className="field-label">
+                                Corrected behavioral defect
+                              </span>
+                              <p>
+                                {
+                                  record.human_revision
+                                    .observed_behavioral_defect
+                                }
+                              </p>
+                            </div>
+                            <DiagnosisBody
+                              diagnosis={record.human_revision}
+                              onSelect={setSelectedEvidence}
+                            />
+                          </section>
+                        )}
+                        <section className="validation">
+                          <div className="section-kicker">
+                            <span className="level-dot human-dot" /> 03 / HUMAN
+                            VALIDATION
+                          </div>
+                          {validated(record) ? (
+                            <>
+                              <h2>Validated diagnosis</h2>
+                              <p>
+                                Accepted by an authorized reviewer for this
+                                workflow. This does not establish objective
+                                causal truth.
+                              </p>
+                              <div className="decision-meta">
+                                Approved by{" "}
+                                <strong>
+                                  {
+                                    record.events.find(
+                                      (event) => event.action === "approve",
+                                    )?.reviewer_id
+                                  }
+                                </strong>{" "}
+                                ·{" "}
+                                {record.events.find(
+                                  (event) => event.action === "approve",
+                                )?.occurred_at
+                                  ? new Date(
+                                      record.events.find(
+                                        (event) => event.action === "approve",
+                                      )!.occurred_at,
+                                    ).toLocaleString()
+                                  : ""}
+                              </div>
+                              <div className="ready">
+                                READY FOR DESIGN <span>→</span>
+                              </div>
+                            </>
+                          ) : record.status === "rejected" ? (
+                            <>
+                              <h2>Diagnosis rejected</h2>
+                              <p>
+                                This hypothesis did not pass human review. It is
+                                not ready for design.
+                              </p>
+                              <div className="decision-meta">
+                                Rejected by{" "}
+                                <strong>
+                                  {
+                                    record.events.find(
+                                      (event) => event.action === "reject",
+                                    )?.reviewer_id
+                                  }
+                                </strong>{" "}
+                                ·{" "}
+                                {
+                                  record.events.find(
+                                    (event) => event.action === "reject",
+                                  )?.rationale
+                                }
+                              </div>
+                              <button
+                                type="button"
+                                className="button secondary"
+                                disabled={busy}
+                                onClick={() => void generate()}
+                              >
+                                Request another hypothesis
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <h2>This diagnosis has not been validated.</h2>
+                              <p>
+                                Inspect supporting and conflicting evidence
+                                before deciding. Approval accepts the{" "}
+                                {record.status === "revised"
+                                  ? "human revision"
+                                  : isDemo
+                                    ? "demo proposal"
+                                    : "AI proposal"}{" "}
+                                for the workflow.
+                              </p>
+                              <label className="reviewer-label">
+                                Reviewer identifier{" "}
+                                <input
+                                  required
+                                  value={reviewer}
+                                  onChange={(event) =>
+                                    setReviewer(event.target.value)
+                                  }
+                                  placeholder="Your reviewer ID"
+                                  autoComplete="username"
+                                />
+                              </label>
+                              {record.status === "awaiting_review" && (
+                                <>
+                                  <div className="review-actions">
+                                    <button
+                                      type="button"
+                                      className="button danger"
+                                      disabled={busy || !reviewer.trim()}
+                                      onClick={() => setAction("reject")}
+                                    >
+                                      Reject
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="button secondary"
+                                      disabled={busy || !reviewer.trim()}
+                                      onClick={() => setAction("revise")}
+                                    >
+                                      Revise
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="button primary"
+                                      disabled={busy || !reviewer.trim()}
+                                      onClick={() => void mutate("approve")}
+                                    >
+                                      {busy
+                                        ? "Saving decision…"
+                                        : "Approve diagnosis"}
+                                    </button>
+                                  </div>
+                                  {action === "reject" && (
+                                    <form
+                                      className="decision-form"
+                                      onSubmit={(event) => {
+                                        event.preventDefault();
+                                        void mutate("reject");
+                                      }}
+                                    >
+                                      <label>
+                                        Reason for rejection{" "}
+                                        <textarea
+                                          required
+                                          value={rationale}
+                                          onChange={(event) =>
+                                            setRationale(event.target.value)
+                                          }
+                                        />
+                                      </label>
+                                      <div className="form-actions">
+                                        <button
+                                          type="button"
+                                          className="button secondary"
+                                          onClick={() => setAction(null)}
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          className="button danger"
+                                          disabled={busy || !rationale.trim()}
+                                        >
+                                          Confirm rejection
+                                        </button>
+                                      </div>
+                                    </form>
+                                  )}
+                                  {action === "revise" && (
+                                    <RevisionForm
+                                      original={record.provider_hypothesis}
+                                      bundle={bundle}
+                                      reviewer={reviewer}
+                                      onCancel={() => setAction(null)}
+                                      onSubmit={(revision, reason) =>
+                                        void mutate("revise", revision, reason)
+                                      }
+                                      busy={busy}
+                                    />
+                                  )}
+                                </>
+                              )}
+                              {record.status === "revised" && (
+                                <div className="review-actions">
+                                  <button
+                                    type="button"
+                                    className="button primary"
+                                    disabled={busy || !reviewer.trim()}
+                                    onClick={() => void mutate("approve")}
+                                  >
+                                    {busy
+                                      ? "Saving decision…"
+                                      : "Approve human revision"}
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {record.events.length > 0 && (
+                            <div className="audit">
+                              <h3>Review history</h3>
+                              <ol>
+                                {record.events.map((event, index) => (
+                                  <li key={index}>
+                                    <strong>{label(event.action)}</strong> by{" "}
+                                    {event.reviewer_id} ·{" "}
+                                    {new Date(
+                                      event.occurred_at,
+                                    ).toLocaleString()}
+                                    {event.rationale && (
+                                      <p>{event.rationale}</p>
+                                    )}
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+                          )}
+                        </section>
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </section>
+
+          <aside className="inspector" aria-label="Evidence inspector">
+            <div className="rail-heading">
+              <span className="eyebrow">Source evidence</span>
+              <h2>Evidence inspector</h2>
+              <p>Review exact QA rows and citation relationships.</p>
+            </div>
+            {!selectedSignal ? (
+              <p className="state-copy">Select a QA signal.</p>
+            ) : !bundle ? (
+              <p className="state-copy">
+                {loadingSignal
+                  ? "Loading source evidence…"
+                  : "Evidence unavailable."}
+              </p>
+            ) : (
+              <>
+                <div className="inspector-tabs">
+                  <span>{bundle.items.length} criterion rows</span>
+                  <span>
+                    {record
+                      ? `${currentDiagnosis?.supporting_evidence.length ?? 0} supporting · ${currentDiagnosis?.conflicting_evidence.length ?? 0} conflicting`
+                      : "No citations yet"}
+                  </span>
+                </div>
+                {record &&
+                  (currentDiagnosis?.conflicting_evidence.length ?? 0) > 0 && (
+                    <div className="challenge-callout">
+                      Conflicting evidence is present. Inspect it before
+                      approval.
+                    </div>
+                  )}
+                <div className="evidence-list">
+                  {bundle.items.map((item, index) => {
+                    const ref = {
+                      item_id: item.item_id,
+                      evaluation_id: item.evaluation_id,
+                    };
+                    const cited = relation(ref, currentDiagnosis);
+                    return (
+                      <button
+                        type="button"
+                        key={item.item_id}
+                        className={`inspector-row ${selectedEvidence?.item_id === item.item_id ? "active" : ""}`}
+                        onClick={() => setSelectedEvidence(ref)}
+                        aria-pressed={
+                          selectedEvidence?.item_id === item.item_id
+                        }
+                      >
+                        <span className="item-number">
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
+                        <span>
+                          <strong>
+                            Evaluation {shortId(item.evaluation_id)}
+                          </strong>
+                          <small>
+                            {item.passed ? "Source QA pass" : "Source QA fail"}{" "}
+                            · {cited === "uncited" ? "Uncited" : label(cited)}
+                          </small>
+                        </span>
+                        <span aria-hidden="true">↗</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="evidence-detail" aria-live="polite">
+                  {selectedEvidence?.item_id === "signal" ? (
+                    <>
+                      <span className="eyebrow">Aggregate citation</span>
+                      <h3>Performance signal</h3>
+                      <p>
+                        {selectedSignal.fail_count} of{" "}
+                        {selectedSignal.evaluated_results} criterion rows
+                        failed, an observed failure rate of{" "}
+                        {percent(selectedSignal.fail_rate)}.
+                      </p>
+                      <p className="quiet">
+                        This aggregate has no individual evaluation ID. Select a
+                        criterion row for source lineage.
+                      </p>
+                    </>
+                  ) : evidenceItem ? (
+                    <>
+                      <span className="eyebrow">
+                        {label(relation(selectedEvidence!, currentDiagnosis))}{" "}
+                        evidence · source QA result
+                      </span>
+                      <h3>Evaluation {shortId(evidenceItem.evaluation_id)}</h3>
+                      <dl>
+                        <div>
+                          <dt>Evaluation reference</dt>
+                          <dd className="mono">{evidenceItem.evaluation_id}</dd>
+                        </div>
+                        <div>
+                          <dt>Criterion</dt>
+                          <dd>{evidenceItem.criterion}</dd>
+                        </div>
+                        <div>
+                          <dt>Source answer / result</dt>
+                          <dd>
+                            {evidenceItem.answer} ·{" "}
+                            {evidenceItem.passed ? "Pass" : "Fail"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Score</dt>
+                          <dd>
+                            {evidenceItem.attained_score} /{" "}
+                            {evidenceItem.max_score}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Workbook / sheet / row</dt>
+                          <dd>
+                            {evidenceItem.source_lineage.source_filename} ·{" "}
+                            {evidenceItem.source_lineage.source_sheet} ·{" "}
+                            {evidenceItem.source_lineage.excel_row}
+                          </dd>
+                        </div>
+                      </dl>
+                      <div className="feedback">
+                        <span className="field-label">Evaluator feedback</span>
+                        <p>
+                          {evidenceItem.evaluator_feedback ??
+                            "No feedback recorded for this row."}
+                        </p>
+                      </div>
+                      <p className="privacy-note">
+                        Reviewer evidence may contain sensitive feedback.
+                        Internal IDs minimize identity; they do not anonymize
+                        this data.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h3>Select evidence to inspect</h3>
+                      <p>
+                        Choose a row above or a citation in the hypothesis to
+                        see its source and relationship.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </aside>
+        </div>
+      </main>
+      <footer className="footer">
+        CoachLens AI · Review Workspace{" "}
+        <span>
+          M4 ends at human validated diagnosis. Design begins in a later
+          milestone.
+        </span>
+      </footer>
+    </div>
+  );
+}
