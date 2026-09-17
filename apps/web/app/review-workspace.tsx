@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import DesignWorkspace from "./design-workspace";
+import { isDesignResult, type DesignResult } from "../lib/designs";
 import {
   api,
   ApiError,
@@ -389,12 +391,18 @@ export default function ReviewWorkspace() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signalError, setSignalError] = useState<string | null>(null);
+  const [designResult, setDesignResult] = useState<DesignResult | null>(null);
+  const [designing, setDesigning] = useState(false);
   // Async results are applied only to the signal that was selected when the request started.
   const selectedRef = useRef<string | null>(null);
+  const recordRef = useRef<string | null>(null);
   const busyRef = useRef(false);
   useEffect(() => {
     selectedRef.current = selectedId;
   }, [selectedId]);
+  useEffect(() => {
+    recordRef.current = recordId;
+  }, [recordId]);
   const selectedSignal =
     signals.find((signal) => signal.signal_id === selectedId) ?? null;
   const record =
@@ -443,6 +451,7 @@ export default function ReviewWorkspace() {
         setBundle(evidence);
         setRecords(hypotheses);
         setRecordId(hypotheses[0]?.provider_hypothesis.hypothesis_id ?? null);
+        setDesignResult(null);
       })
       .catch((cause) => {
         if (!cancelled) setSignalError((cause as Error).message);
@@ -454,6 +463,15 @@ export default function ReviewWorkspace() {
       cancelled = true;
     };
   }, [selectedId]);
+  useEffect(() => {
+    if (!record || !validated(record)) return;
+    const id = record.provider_hypothesis.hypothesis_id;
+    let cancelled = false;
+    api(`/diagnoses/${encodeURIComponent(id)}`, isDesignResult, undefined, "designs")
+      .then((result) => { if (!cancelled && result.diagnosis_id === id) setDesignResult(result); })
+      .catch((cause) => { if (!cancelled && (!(cause instanceof ApiError) || cause.status !== 404)) setError((cause as Error).message); });
+    return () => { cancelled = true; };
+  }, [record]);
 
   async function refreshRecord(id: string) {
     const latest = await api(hypothesisPath(id), isRecordState);
@@ -540,6 +558,24 @@ export default function ReviewWorkspace() {
       finish();
     }
   }
+  async function designIntervention() {
+    if (!record || !validated(record) || !begin()) return;
+    const id = record.provider_hypothesis.hypothesis_id;
+    setDesigning(true);
+    try {
+      const result = await api(`/diagnoses/${encodeURIComponent(id)}`, isDesignResult,
+        { method: "POST" }, "designs");
+      if (result.diagnosis_id !== id) throw new Error("The design response did not match the selected diagnosis.");
+      // A design that finished for a diagnosis the reviewer has since left must not render
+      // under another hypothesis; the effect above reloads it when they return.
+      if (selectedRef.current === record.provider_hypothesis.signal_id && recordRef.current === id) setDesignResult(result);
+    } catch (cause) {
+      if (recordRef.current === id) setError((cause as Error).message);
+    } finally {
+      setDesigning(false);
+      finish();
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -557,7 +593,7 @@ export default function ReviewWorkspace() {
         </div>
         <div className="topbar-right">
           <span className="workspace-label">REVIEW WORKSPACE</span>
-          <span className="milestone">MILESTONE 04</span>
+          <span className="milestone">MILESTONE 05</span>
         </div>
       </header>
       <main className="workspace">
@@ -638,6 +674,7 @@ export default function ReviewWorkspace() {
                         setBundle(null);
                         setRecords([]);
                         setRecordId(null);
+                        setDesignResult(null);
                         setSelectedEvidence(null);
                         setAction(null);
                         setSelectedId(signal.signal_id);
@@ -786,6 +823,7 @@ export default function ReviewWorkspace() {
                           value={recordId ?? ""}
                           onChange={(event) => {
                             setRecordId(event.target.value);
+                            setDesignResult(null);
                             setSelectedEvidence(null);
                             setAction(null);
                           }}
@@ -1010,6 +1048,9 @@ export default function ReviewWorkspace() {
                               <div className="ready">
                                 READY FOR DESIGN <span>→</span>
                               </div>
+                              {!designResult && <button type="button" className="button primary" disabled={busy || designing} onClick={() => void designIntervention()}>DESIGN INTERVENTION</button>}
+                              {designing && <p role="status">Designing intervention and learning experience…</p>}
+                              {designResult && <DesignWorkspace result={designResult} />}
                             </>
                           ) : record.status === "rejected" ? (
                             <>
@@ -1342,7 +1383,7 @@ export default function ReviewWorkspace() {
       <footer className="footer">
         CoachLens AI · Review Workspace{" "}
         <span>
-          M4 ends at human validated diagnosis. Design begins in a later
+          M5 extends human-validated diagnosis to a proposed intervention. Independent alignment review begins in a later
           milestone.
         </span>
       </footer>

@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from app.diagnostics.api import router as diagnostics_router
 from app.diagnostics.engine import DiagnosticError, DiagnosticService
+from app.design.api import router as design_router
+from app.design.service import DesignService, UnavailableDesignProvider
 from app.results_cx.models import Evaluation
 
 from app.config import get_settings
@@ -31,7 +33,10 @@ def _local_evaluations() -> list[Evaluation]:
 
 
 app.state.diagnostics = DiagnosticService(_local_evaluations(), UnavailableReasoner())
+unavailable_design = UnavailableDesignProvider()
+app.state.designs = DesignService(app.state.diagnostics, unavailable_design, unavailable_design)
 app.include_router(diagnostics_router)
+app.include_router(design_router)
 
 
 @app.get("/health", response_model=HealthResponse)

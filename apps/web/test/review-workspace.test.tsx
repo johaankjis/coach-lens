@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReviewWorkspace from "../app/review-workspace";
 import type { EvidenceBundle, RecordState, Signal } from "../lib/diagnostics";
+import { designFixture } from "./design-workspace.test-fixture";
 
 const signal: Signal = {
   signal_id: "sig_1",
@@ -86,6 +87,7 @@ function route(
     if (path.endsWith("/review-evidence")) return reply(evidence);
     if (path.endsWith("/hypotheses")) return reply(records);
     if (path.endsWith("/hypotheses/hyp_1")) return reply(records[0]);
+    if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
     throw new Error(`Unexpected route ${path}`);
   });
   vi.stubGlobal("fetch", mock);
@@ -647,5 +649,86 @@ describe("adversarial review states", () => {
     );
     expect(screen.getByText("Yes · Pass")).toBeInTheDocument();
     expect(screen.getByText("Source answer / result")).toBeInTheDocument();
+  });
+});
+
+describe("M5 orchestration in the review workspace", () => {
+  const approved = { ...proposed, status: "approved" as const };
+
+  it("requires approval before exposing design action", async () => {
+    route();
+    render(<ReviewWorkspace />);
+    await loaded();
+    expect(screen.queryByRole("button", { name: "DESIGN INTERVENTION" })).not.toBeInTheDocument();
+  });
+
+  it("shows truthful loading and creates one training run despite repeated clicks", async () => {
+    let complete!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { complete = resolve; });
+    const mock = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("/signals")) return reply([signal]);
+      if (path.endsWith("/review-evidence")) return reply(evidence);
+      if (path.endsWith("/hypotheses")) return reply([approved]);
+      if (path.includes("/api/designs/") && init?.method === "POST") return pending;
+      if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
+      throw new Error(path);
+    });
+    vi.stubGlobal("fetch", mock);
+    render(<ReviewWorkspace />);
+    const button = await screen.findByRole("button", { name: "DESIGN INTERVENTION" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(screen.getByRole("status")).toHaveTextContent("Designing intervention and learning experience");
+    complete(reply(designFixture()));
+    expect(await screen.findByText("READY FOR ALIGNMENT REVIEW")).toBeInTheDocument();
+    expect(screen.getByText("Proposed activities")).toBeInTheDocument();
+    expect(screen.getByText("Hands-on practice")).toBeInTheDocument();
+    expect(screen.getByText("Practice rubric")).toBeInTheDocument();
+    expect(screen.queryByText("VALIDATED TRAINING")).not.toBeInTheDocument();
+    expect(mock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("drops a design that finishes after the reviewer switched to another hypothesis", async () => {
+    const other: RecordState = { ...approved, provider_hypothesis: { ...approved.provider_hypothesis, hypothesis_id: "hyp_2", explanation: "Second proposal." } };
+    let complete!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { complete = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("/signals")) return reply([signal]);
+      if (path.endsWith("/review-evidence")) return reply(evidence);
+      if (path.endsWith("/hypotheses")) return reply([approved, other]);
+      if (path.includes("/api/designs/") && init?.method === "POST") return pending;
+      if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
+      throw new Error(path);
+    }));
+    render(<ReviewWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "DESIGN INTERVENTION" }));
+    fireEvent.change(screen.getByLabelText("Review history"), { target: { value: "hyp_2" } });
+    expect(await screen.findByText("Second proposal.")).toBeInTheDocument();
+    complete(reply(designFixture()));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("READY FOR ALIGNMENT REVIEW")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not manufacture a design on failed or malformed API output", async () => {
+    let response: unknown = { detail: { code: "invalid_design_output", message: "private" } };
+    let status = 502;
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("/signals")) return reply([signal]);
+      if (path.endsWith("/review-evidence")) return reply(evidence);
+      if (path.endsWith("/hypotheses")) return reply([approved]);
+      if (path.includes("/api/designs/") && init?.method === "POST") return reply(response, status);
+      if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
+      throw new Error(path);
+    }));
+    render(<ReviewWorkspace />);
+    await userEvent.click(await screen.findByRole("button", { name: "DESIGN INTERVENTION" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("invalid output");
+    expect(screen.queryByText("READY FOR ALIGNMENT REVIEW")).not.toBeInTheDocument();
+    response = { ...designFixture(), training_design: { target_behaviors: null } };
+    status = 200;
+    await userEvent.click(screen.getByRole("button", { name: "DESIGN INTERVENTION" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("unexpected response");
+    expect(screen.queryByText("READY FOR ALIGNMENT REVIEW")).not.toBeInTheDocument();
   });
 });

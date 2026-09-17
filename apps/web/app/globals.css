@@ -734,6 +734,40 @@ button:disabled {
   font-size: 18px;
   line-height: 10px;
 }
+.design-workspace {
+  margin-top: 24px;
+  padding-top: 22px;
+  border-top: 2px solid #b9d7d1;
+  line-height: 1.55;
+}
+.design-workspace h2 {
+  margin: 8px 0 12px;
+}
+.design-workspace h3 {
+  margin: 28px 0 9px;
+  font-size: 16px;
+}
+.design-workspace h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+}
+.design-workspace ul,
+.design-workspace ol {
+  padding-left: 20px;
+}
+.design-workspace li {
+  margin: 7px 0;
+}
+.design-card {
+  background: white;
+  border: 1px solid var(--line);
+  border-left: 3px solid #69a79a;
+  padding: 15px 18px;
+  margin: 12px 0;
+}
+.design-card p {
+  margin: 8px 0;
+}
 .audit {
   border-top: 1px solid var(--line);
   margin-top: 23px;
