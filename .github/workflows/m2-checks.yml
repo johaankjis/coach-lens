@@ -1,9 +1,9 @@
-name: M3 checks
+name: CoachLens checks
 
 on:
   pull_request:
   push:
-    branches: [main, feat/m2-data-foundation, review/m2-data-foundation, feat/m3-diagnostic-engine, review/m3-diagnostic-engine]
+    branches: [main, feat/m2-data-foundation, review/m2-data-foundation, feat/m3-diagnostic-engine, review/m3-diagnostic-engine, feat/m4-review-workspace, review/m4-review-workspace]
 
 jobs:
   checks:
@@ -23,4 +23,5 @@ jobs:
       - run: npm ci --prefix apps/web
       - run: npm --prefix apps/web run lint
       - run: npm --prefix apps/web run typecheck
+      - run: npm --prefix apps/web run test
       - run: npm --prefix apps/web run build

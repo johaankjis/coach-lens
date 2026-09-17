@@ -50,6 +50,23 @@ def evidence(signal_id: str, svc: DiagnosticService = Depends(service)):
         raise http_error(exc) from exc
 
 
+@router.get("/signals/{signal_id}/review-evidence")
+def review_evidence(signal_id: str, svc: DiagnosticService = Depends(service)):
+    """Local reviewer view with source lineage. Feedback remains confidential."""
+    try:
+        return svc.evidence(signal_id)
+    except DiagnosticError as exc:
+        raise http_error(exc) from exc
+
+
+@router.get("/signals/{signal_id}/hypotheses")
+def hypotheses(signal_id: str, svc: DiagnosticService = Depends(service)):
+    try:
+        return svc.list_hypotheses(signal_id)
+    except DiagnosticError as exc:
+        raise http_error(exc) from exc
+
+
 @router.post("/signals/{signal_id}/hypotheses", status_code=201)
 async def diagnose(signal_id: str, svc: DiagnosticService = Depends(service)):
     try:

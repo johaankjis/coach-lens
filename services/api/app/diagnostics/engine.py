@@ -192,6 +192,15 @@ class DiagnosticService:
     def list_signals(self) -> list[PerformanceSignal]:
         return sorted(self.signals.values(), key=lambda s: (-s.fail_count, -s.fail_rate, s.domain.value, s.criterion))
 
+    def list_hypotheses(self, signal_id: str) -> list[DiagnosticRecord]:
+        """Return snapshots for one known signal, newest first, without exposing store references."""
+        if signal_id not in self.signals:
+            raise DiagnosticError("signal_not_found", "Signal was not found")
+        with self._lock:
+            records = [record.model_copy(deep=True) for record in self._records.values()
+                       if record.provider_hypothesis.signal_id == signal_id]
+        return list(reversed(records))
+
     def evidence(self, signal_id: str) -> EvidenceBundle:
         signal = self.signals.get(signal_id)
         if signal is None:
