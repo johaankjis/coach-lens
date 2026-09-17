@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services" / "api"))
 
 from app.config import get_settings  # noqa: E402
-from app.results_cx.demo import load_results_cx_demo  # noqa: E402
+from app.results_cx.demo import install_results_cx_demo, load_results_cx_demo  # noqa: E402
 from app.results_cx.pipeline import PipelineValidationError  # noqa: E402
 
 
@@ -23,15 +23,10 @@ def main() -> int:
     except PipelineValidationError as exc:
         parser.exit(2, f"ResultsCX demo could not start: {exc}\n")
 
-    from app.main import UnavailableReasoner, app
-    from app.diagnostics.engine import DiagnosticService
-    from app.design.service import DesignService, UnavailableDesignProvider
+    from app.main import app
     import uvicorn
 
-    app.state.diagnostics = DiagnosticService(evaluations, UnavailableReasoner())
-    unavailable_design = UnavailableDesignProvider()
-    app.state.designs = DesignService(app.state.diagnostics, unavailable_design, unavailable_design)
-    app.state.demo_mode = "real_results_cx"
+    install_results_cx_demo(app, evaluations)
     print("Mode: REAL RESULTS CX (local data; diagnostic and design providers unavailable)", flush=True)
     print(f"Loaded {len(evaluations)} evaluations, "
           f"{sum(len(e.criteria) for e in evaluations)} criterion records, "

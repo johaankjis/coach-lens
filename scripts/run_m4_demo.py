@@ -51,6 +51,8 @@ def fixture_evaluations() -> list[Evaluation]:
 class DemoFixtureReasoner:
     """Fixed fixture using bundle IDs only for valid citations; performs no inference."""
 
+    controlled_fixture = True  # Reported by /diagnostics/mode from the object, not the label.
+
     def __init__(self, resolution_signal_id: str):
         self.resolution_signal_id = resolution_signal_id
 

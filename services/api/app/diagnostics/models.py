@@ -33,7 +33,11 @@ class PerformanceSignal(StrictModel):
     domain: Domain
     criterion: str
     evaluated_results: int = Field(ge=0)
+    # Distinct evaluations that contain this criterion, and all evaluations in the loaded
+    # dataset. They differ when a criterion is absent from some evaluations, so rates below
+    # describe the represented evaluations only, never the whole dataset.
     evaluated_evaluations: int = Field(ge=0)
+    total_evaluations: int = Field(ge=0)
     pass_count: int = Field(ge=0)
     fail_count: int = Field(ge=0)
     pass_rate: Decimal = Field(ge=0, le=1)

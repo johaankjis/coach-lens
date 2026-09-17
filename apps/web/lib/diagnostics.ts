@@ -8,6 +8,7 @@ export type Signal = {
   criterion: string;
   evaluated_results: number;
   evaluated_evaluations: number;
+  total_evaluations: number;
   pass_count: number;
   fail_count: number;
   fail_rate: string;
@@ -168,6 +169,7 @@ export function isSignal(value: unknown): value is Signal {
     isString(value.criterion) &&
     typeof value.evaluated_results === "number" &&
     typeof value.evaluated_evaluations === "number" &&
+    typeof value.total_evaluations === "number" &&
     typeof value.pass_count === "number" &&
     typeof value.fail_count === "number" &&
     isString(value.fail_rate) &&

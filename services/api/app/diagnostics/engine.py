@@ -32,6 +32,13 @@ class ProviderOutputError(DiagnosticError):
 SIGNAL_REFERENCE = "signal"  # The only aggregate citation; it has no evaluation ID.
 
 
+class UnavailableReasoner:
+    """Default provider: no reasoning happens and no evidence leaves the process."""
+
+    async def diagnose(self, evidence_bundle):
+        raise DiagnosticError("reasoner_unavailable", "No diagnostic reasoning provider is configured")
+
+
 def _id(prefix: str, *parts: str) -> str:
     raw = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return prefix + sha256(raw.encode()).hexdigest()[:24]
@@ -49,13 +56,15 @@ def detect_signals(evaluations: list[Evaluation]) -> list[PerformanceSignal]:
     No failure threshold or causal label is applied.
     """
     stats = [s for s in analyze(evaluations) if s.question is not None]
+    total_evaluations = len(evaluations)
     result = []
     for s in stats:
         rows = _signal_rows(evaluations, s.domain, s.question)
         result.append(PerformanceSignal(
             signal_id=_id("sig_", s.domain.value, s.question), domain=s.domain,
             criterion=s.question, evaluated_results=s.pass_count + s.fail_count,
-            evaluated_evaluations=s.evaluations, pass_count=s.pass_count,
+            evaluated_evaluations=s.evaluations, total_evaluations=total_evaluations,
+            pass_count=s.pass_count,
             fail_count=s.fail_count, pass_rate=s.pass_rate, fail_rate=s.fail_rate,
             feedback_count=s.feedback_count, feedback_coverage=s.feedback_coverage,
             max_score_total=s.max_score_total, attained_score_total=s.attained_score_total,
@@ -76,6 +85,8 @@ def build_bundle(signal: PerformanceSignal, evaluations: list[Evaluation]) -> Ev
     stated_lineages = Counter((l.source_filename, l.source_sheet, l.excel_row)
                               for l in signal.source_lineages)
     if (len(rows) != signal.evaluated_results or
+            len({eid for eid, _ in rows}) != signal.evaluated_evaluations or
+            signal.total_evaluations != len(evaluations) or
             sum(not c.passed for _, c in rows) != signal.fail_count or
             sum(c.passed for _, c in rows) != signal.pass_count or
             sum(bool(c.evaluator_feedback) for _, c in rows) != signal.feedback_count or
@@ -186,11 +197,22 @@ class ControlledTestReasoner:
     It performs no inference of any kind and must never be installed outside tests.
     """
 
+    controlled_fixture = True  # Reported by /diagnostics/mode; see `provider_kind`.
+
     def __init__(self, response: object):
         self.response = response
 
     async def diagnose(self, evidence_bundle: ProviderEvidenceBundle) -> object:
         return self.response
+
+
+def provider_kind(provider: object) -> str:
+    """Classify an installed provider from the object itself, never from a configuration label."""
+    if isinstance(provider, UnavailableReasoner):
+        return "unavailable"
+    if getattr(provider, "controlled_fixture", False) is True:
+        return "controlled_fixture"
+    return "provider"
 
 
 class DiagnosticService:

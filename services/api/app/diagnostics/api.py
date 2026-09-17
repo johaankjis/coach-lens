@@ -3,7 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .engine import DiagnosticError, DiagnosticService, ProviderOutputError
+from app.design.service import UnavailableDesignProvider
+
+from .engine import DiagnosticError, DiagnosticService, ProviderOutputError, provider_kind
 from .models import HumanRevision
 
 
@@ -44,10 +46,26 @@ def signals(svc: DiagnosticService = Depends(service)):
 
 @router.get("/mode")
 def mode(request: Request):
-    """Non-sensitive operator-visible provenance for the running process."""
-    return {"mode": request.app.state.demo_mode,
-            "diagnostic_provider": "controlled_fixture" if request.app.state.demo_mode == "synthetic_demo"
-            else "unavailable"}
+    """Non-sensitive operator-visible provenance for the running process.
+
+    `mode` is the label the startup path declared. Provider fields and counts are read from
+    the installed services, so the label cannot claim a provider that is not really there.
+    """
+    state = request.app.state
+    diagnostics: DiagnosticService = state.diagnostics
+    designs = state.designs
+    if designs.controlled_fixture:
+        design_provider = "controlled_fixture"
+    elif isinstance(designs.intervention, UnavailableDesignProvider) and isinstance(
+            designs.training, UnavailableDesignProvider):
+        design_provider = "unavailable"
+    else:
+        design_provider = "provider"
+    return {"mode": state.demo_mode,
+            "diagnostic_provider": provider_kind(diagnostics.reasoner),
+            "design_provider": design_provider,
+            "evaluation_count": len(diagnostics.evaluations),
+            "signal_count": len(diagnostics.signals)}
 
 
 @router.get("/signals/{signal_id}/evidence")

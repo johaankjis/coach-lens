@@ -738,8 +738,11 @@ export default function ReviewWorkspace() {
                       <span>criterion results failed</span>
                     </div>
                     <div>
-                      <b>{selectedSignal.evaluated_evaluations}</b>
-                      <span>evaluations represented</span>
+                      <b>
+                        {selectedSignal.evaluated_evaluations} of{" "}
+                        {selectedSignal.total_evaluations}
+                      </b>
+                      <span>loaded evaluations contain this criterion</span>
                     </div>
                     <div>
                       <b>{selectedSignal.feedback_count}</b>
