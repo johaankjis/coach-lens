@@ -183,6 +183,9 @@ describe("diagnostic review semantics", () => {
     );
     expect(await screen.findByText("READY FOR DESIGN")).toBeInTheDocument();
     expect(screen.getByText("HUMAN VALIDATED")).toBeInTheDocument();
+    expect(screen.getByText("ACCEPTED BY REVIEWER")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Working diagnosis" })).toBeInTheDocument();
+    expect(screen.getByText(/training has not yet been selected/)).toBeInTheDocument();
     expect(mock).toHaveBeenCalledWith(
       expect.stringContaining("/approve"),
       expect.objectContaining({ method: "POST" }),
@@ -233,6 +236,10 @@ describe("diagnostic review semantics", () => {
       expect(JSON.parse(String(init?.body)).revision.cause_domain).toBe(
         "process_gap",
       );
+      expect(Object.keys(JSON.parse(String(init?.body)).revision).sort()).toEqual([
+        "cause_domain", "conflicting_evidence", "explanation", "missing_evidence",
+        "observed_behavioral_defect", "performance_dimension", "supporting_evidence",
+      ]);
       return reply({
         ...proposed,
         status: "revised",
@@ -461,6 +468,9 @@ describe("diagnostic review semantics", () => {
     expect(
       screen.queryByText("Model-reported confidence"),
     ).not.toBeInTheDocument();
+    await userEvent.type(screen.getByPlaceholderText("Your reviewer ID"), "qa-1");
+    await userEvent.click(screen.getByRole("button", { name: "Revise" }));
+    expect(screen.getByText(/original non-AI fixture proposal remains/)).toBeInTheDocument();
   });
 });
 
@@ -605,15 +615,16 @@ describe("adversarial review states", () => {
     render(<ReviewWorkspace />);
     await loaded();
     expect(
-      screen.getByText("SUPERSEDED · REVISION VALIDATED"),
+      screen.getByText("SUPERSEDED"),
     ).toBeInTheDocument();
-    expect(screen.queryByText("HUMAN VALIDATED")).not.toBeInTheDocument();
+    expect(screen.getByText("HUMAN VALIDATED")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", {
-        name: "Validated diagnosis · human revision",
+        name: "Working diagnosis",
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Process Gap · Undetermined")).toBeInTheDocument();
+    expect(screen.getByText("Human-revised working diagnosis")).toBeInTheDocument();
     expect(screen.getByText("READY FOR DESIGN")).toBeInTheDocument();
     expect(screen.getByText("Revision approved")).toBeInTheDocument();
   });
