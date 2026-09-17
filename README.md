@@ -75,3 +75,7 @@ The frontend runs at <http://localhost:3000> and proxies `/api/diagnostics/*` an
 ## M3 diagnostic engine
 
 The diagnostic API starts with no local QA records. To use ignored M2 output, set `COACHLENS_API_DIAGNOSTIC_EVALUATIONS_PATH=data/processed/evaluations.jsonl` before starting Uvicorn from the repo root. Signal and evidence routes then work; the evidence view minimizes identity but is not anonymized (see the guide's privacy boundary). Diagnosis creation returns 503 until a reasoning provider is injected; the included controlled test reasoner is for tests only. Reviews are held in process memory and disappear on restart. See [the M3 diagnostic guide](docs/m3-diagnostic-engine.md) for semantics, routes, privacy, the review gate, and the future Bedrock adapter point.
+
+## M5.6 real ResultsCX demo
+
+For an explicit, local-only real-workbook review path, place the three supplied files in `data/raw/` and run `services/api/.venv/bin/python scripts/run_results_cx_demo.py` from the repository root, then start the frontend. This mode uses M2 normalization and M3 observed signals/evidence, but has no diagnostic provider; diagnosis requests return 503 and cannot proceed to M5 design. It never falls back to synthetic data. Use the separate `run_m4_demo.py` for the controlled synthetic end-to-end workflow. The backend startup banner and `/diagnostics/mode` identify the running mode. See [the M5.6 guide](docs/m56-real-results-cx-demo.md) for exact filenames and privacy limits.

@@ -51,6 +51,8 @@ def fixture_evaluations() -> list[Evaluation]:
 class DemoFixtureReasoner:
     """Fixed fixture using bundle IDs only for valid citations; performs no inference."""
 
+    controlled_fixture = True  # Reported by /diagnostics/mode from the object, not the label.
+
     def __init__(self, resolution_signal_id: str):
         self.resolution_signal_id = resolution_signal_id
 
@@ -91,6 +93,7 @@ if __name__ == "__main__":
     resolution_signal_id = next(signal.signal_id for signal in detect_signals(evaluations)
                                 if signal.criterion == "Resolution summary clarity")
     app.state.diagnostics = DiagnosticService(evaluations, DemoFixtureReasoner(resolution_signal_id))
+    app.state.demo_mode = "synthetic_demo"
     fixture = DemoDesignFixture(resolution_signal_id)
     app.state.designs = DesignService(app.state.diagnostics, fixture, fixture, controlled_fixture=True)
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -11,6 +11,7 @@ const signal: Signal = {
   criterion: "Resolution clarity",
   evaluated_results: 2,
   evaluated_evaluations: 2,
+  total_evaluations: 3,
   pass_count: 1,
   fail_count: 1,
   fail_rate: "0.5",
@@ -109,6 +110,10 @@ describe("diagnostic review semantics", () => {
       screen.getByText(/OBSERVED · DETERMINISTIC QA SIGNAL/),
     ).toBeInTheDocument();
     expect(screen.getByText("1 of 2")).toBeInTheDocument();
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+    expect(
+      screen.getByText("loaded evaluations contain this criterion"),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("50.0%").length).toBeGreaterThan(0);
     expect(
       screen.getByText(/AI-GENERATED · DIAGNOSTIC HYPOTHESIS/),

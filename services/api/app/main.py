@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from app.diagnostics.api import router as diagnostics_router
-from app.diagnostics.engine import DiagnosticError, DiagnosticService
+from app.diagnostics.engine import DiagnosticService, UnavailableReasoner  # noqa: F401 re-export
 from app.design.api import router as design_router
 from app.design.service import DesignService, UnavailableDesignProvider
 from app.results_cx.models import Evaluation
@@ -20,11 +20,6 @@ settings = get_settings()
 app = FastAPI(title=settings.title)
 
 
-class UnavailableReasoner:
-    async def diagnose(self, evidence_bundle):
-        raise DiagnosticError("reasoner_unavailable", "No diagnostic reasoning provider is configured")
-
-
 def _local_evaluations() -> list[Evaluation]:
     path = settings.diagnostic_evaluations_path
     if path is None:
@@ -33,6 +28,7 @@ def _local_evaluations() -> list[Evaluation]:
 
 
 app.state.diagnostics = DiagnosticService(_local_evaluations(), UnavailableReasoner())
+app.state.demo_mode = "local_normalized" if settings.diagnostic_evaluations_path else "unconfigured"
 unavailable_design = UnavailableDesignProvider()
 app.state.designs = DesignService(app.state.diagnostics, unavailable_design, unavailable_design)
 app.include_router(diagnostics_router)
