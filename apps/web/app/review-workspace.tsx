@@ -195,6 +195,7 @@ function RevisionForm({
   onCancel,
   onSubmit,
   busy,
+  demo,
 }: {
   original: Diagnosis;
   bundle: EvidenceBundle | null;
@@ -202,9 +203,13 @@ function RevisionForm({
   onCancel: () => void;
   onSubmit: (revision: Diagnosis, rationale: string) => void;
   busy: boolean;
+  demo: boolean;
 }) {
   const [draft, setDraft] = useState<Diagnosis>(() => ({
-    ...original,
+    observed_behavioral_defect: original.observed_behavioral_defect,
+    cause_domain: original.cause_domain,
+    performance_dimension: original.performance_dimension,
+    explanation: original.explanation,
     supporting_evidence: [...original.supporting_evidence],
     conflicting_evidence: [...original.conflicting_evidence],
     missing_evidence: [...original.missing_evidence],
@@ -256,7 +261,7 @@ function RevisionForm({
         <span className="eyebrow">Human correction</span>
         <h3>Revise diagnosis</h3>
         <p>
-          The original AI proposal remains in the record. This revision will
+          The original {demo ? "non-AI fixture" : "AI"} proposal remains in the record. This revision will
           need a separate approval.
         </p>
       </div>
@@ -887,18 +892,15 @@ export default function ReviewWorkspace() {
                           <div className="hypothesis-head">
                             <div>
                               <span className="eyebrow">
-                                Provider proposal ·{" "}
-                                {shortId(
-                                  record.provider_hypothesis.hypothesis_id,
-                                )}
+                                {isDemo ? "Original fixture proposal" : "Original AI proposal"}
                               </span>
                               <h2>
                                 {record.status === "rejected"
                                   ? "Rejected diagnosis"
                                   : record.human_revision
-                                    ? "Original proposal, corrected by reviewer"
+                                    ? "Original proposal · superseded by reviewer"
                                     : validated(record)
-                                      ? "Human-validated hypothesis"
+                                      ? "Original proposal · accepted by reviewer"
                                       : "Awaiting human validation"}
                               </h2>
                             </div>
@@ -909,7 +911,7 @@ export default function ReviewWorkspace() {
                                     ? "superseded"
                                     : "pending"
                                   : validated(record)
-                                    ? "validated"
+                                    ? "accepted"
                                     : record.status === "rejected"
                                       ? "rejected"
                                       : "pending"
@@ -917,10 +919,10 @@ export default function ReviewWorkspace() {
                             >
                               {record.human_revision
                                 ? record.revision_approved
-                                  ? "SUPERSEDED · REVISION VALIDATED"
+                                  ? "SUPERSEDED"
                                   : "REVISED · NOT YET VALIDATED"
                                 : validated(record)
-                                  ? "HUMAN VALIDATED"
+                                  ? "ACCEPTED BY REVIEWER"
                                   : record.status === "rejected"
                                     ? "REJECTED"
                                     : "NOT YET VALIDATED"}
@@ -1008,22 +1010,15 @@ export default function ReviewWorkspace() {
                           </div>
                           {validated(record) ? (
                             <>
-                              <h2>
-                                {record.human_revision
-                                  ? "Validated diagnosis · human revision"
-                                  : isDemo
-                                    ? "Validated diagnosis · demo proposal"
-                                    : "Validated diagnosis · AI proposal"}
-                              </h2>
+                              <span className="validation-step">↓ Accepted by reviewer</span>
+                              <h2>Working diagnosis</h2>
+                              <div className="working-diagnosis">
+                                <strong>{label(currentDiagnosis!.cause_domain)} · {label(currentDiagnosis!.performance_dimension)}</strong>
+                                <span>HUMAN VALIDATED</span>
+                                <small>{record.human_revision ? "Human-revised working diagnosis" : isDemo ? "Accepted original fixture proposal" : "Accepted original AI proposal"}</small>
+                              </div>
                               <p>
-                                A reviewer accepted{" "}
-                                <strong>
-                                  {label(currentDiagnosis!.cause_domain)} ·{" "}
-                                  {label(
-                                    currentDiagnosis!.performance_dimension,
-                                  )}
-                                </strong>{" "}
-                                for this workflow. Approval records a human
+                                Approval records a human
                                 decision; it does not establish objective causal
                                 truth, and reviewer identifiers are not
                                 authenticated.
@@ -1048,12 +1043,13 @@ export default function ReviewWorkspace() {
                                     ).toLocaleString()
                                   : ""}
                               </div>
-                              <div className="ready">
-                                READY FOR DESIGN <span>→</span>
-                              </div>
-                              {!designResult && <button type="button" className="button primary" disabled={busy || designing} onClick={() => void designIntervention()}>DESIGN INTERVENTION</button>}
+                              {!designResult && <>
+                                <div className="ready">READY FOR DESIGN <span>→</span></div>
+                                <p className="design-transition">The diagnosis is ready. Design Intervention asks CoachLens to propose the appropriate response; training has not yet been selected.</p>
+                                <button type="button" className="button primary" disabled={busy || designing} onClick={() => void designIntervention()}>DESIGN INTERVENTION</button>
+                              </>}
                               {designing && <p role="status">Designing intervention and learning experience…</p>}
-                              {designResult && <DesignWorkspace result={designResult} />}
+                              {designResult && <DesignWorkspace result={designResult} signalLabel={selectedSignal.criterion} />}
                             </>
                           ) : record.status === "rejected" ? (
                             <>
@@ -1187,6 +1183,7 @@ export default function ReviewWorkspace() {
                                         void mutate("revise", revision, reason)
                                       }
                                       busy={busy}
+                                      demo={isDemo}
                                     />
                                   )}
                                 </>
@@ -1366,6 +1363,15 @@ export default function ReviewWorkspace() {
                         Reviewer evidence may contain sensitive feedback.
                         Internal IDs minimize identity; they do not anonymize
                         this data.
+                      </p>
+                    </>
+                  ) : selectedEvidence ? (
+                    <>
+                      <h3>Citation not in this signal’s evidence</h3>
+                      <p>
+                        The cited item {shortId(selectedEvidence.item_id)} is
+                        not one of this signal’s source rows. Refresh before
+                        relying on it.
                       </p>
                     </>
                   ) : (

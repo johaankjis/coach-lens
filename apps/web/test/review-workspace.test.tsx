@@ -183,6 +183,9 @@ describe("diagnostic review semantics", () => {
     );
     expect(await screen.findByText("READY FOR DESIGN")).toBeInTheDocument();
     expect(screen.getByText("HUMAN VALIDATED")).toBeInTheDocument();
+    expect(screen.getByText("ACCEPTED BY REVIEWER")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Working diagnosis" })).toBeInTheDocument();
+    expect(screen.getByText(/training has not yet been selected/)).toBeInTheDocument();
     expect(mock).toHaveBeenCalledWith(
       expect.stringContaining("/approve"),
       expect.objectContaining({ method: "POST" }),
@@ -233,6 +236,10 @@ describe("diagnostic review semantics", () => {
       expect(JSON.parse(String(init?.body)).revision.cause_domain).toBe(
         "process_gap",
       );
+      expect(Object.keys(JSON.parse(String(init?.body)).revision).sort()).toEqual([
+        "cause_domain", "conflicting_evidence", "explanation", "missing_evidence",
+        "observed_behavioral_defect", "performance_dimension", "supporting_evidence",
+      ]);
       return reply({
         ...proposed,
         status: "revised",
@@ -405,6 +412,41 @@ describe("diagnostic review semantics", () => {
     expect(screen.queryByText("Private feedback")).not.toBeInTheDocument();
   });
 
+  it("fails explicitly in real mode when no reasoning provider exists", async () => {
+    // M5.6 real ResultsCX mode installs UnavailableReasoner: a request must not produce a
+    // hypothesis, a local cause, or a design path, and must not fall back to a fixture.
+    const mock = route([], async () =>
+      reply(
+        { detail: { code: "reasoner_unavailable", message: "internal detail" } },
+        503,
+      ),
+    );
+    render(<ReviewWorkspace />);
+    await screen.findByText("No hypothesis for this signal yet.");
+    expect(screen.getByText("Not requested")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Request diagnostic hypothesis" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No reasoning provider is configured",
+    );
+    expect(screen.queryByText("internal detail")).not.toBeInTheDocument();
+    expect(screen.getByText("No hypothesis for this signal yet.")).toBeInTheDocument();
+    expect(screen.getByText("Not requested")).toBeInTheDocument();
+    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(screen.queryByText(/DIAGNOSTIC HYPOTHESIS$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/CONTROLLED DEMO/)).not.toBeInTheDocument();
+    for (const cause of ["Skill Gap", "Knowledge Gap", "Process Gap"])
+      expect(screen.queryByText(cause)).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "DESIGN INTERVENTION" })).not.toBeInTheDocument();
+    expect(mock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(mock.mock.calls.some(([path]) => String(path).includes("/api/designs/"))).toBe(false);
+    // The deterministic observation is untouched by the failure.
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+  });
+
   it("shows an unavailable backend without making up signals", async () => {
     vi.stubGlobal(
       "fetch",
@@ -461,6 +503,9 @@ describe("diagnostic review semantics", () => {
     expect(
       screen.queryByText("Model-reported confidence"),
     ).not.toBeInTheDocument();
+    await userEvent.type(screen.getByPlaceholderText("Your reviewer ID"), "qa-1");
+    await userEvent.click(screen.getByRole("button", { name: "Revise" }));
+    expect(screen.getByText(/original non-AI fixture proposal remains/)).toBeInTheDocument();
   });
 });
 
@@ -605,15 +650,16 @@ describe("adversarial review states", () => {
     render(<ReviewWorkspace />);
     await loaded();
     expect(
-      screen.getByText("SUPERSEDED · REVISION VALIDATED"),
+      screen.getByText("SUPERSEDED"),
     ).toBeInTheDocument();
-    expect(screen.queryByText("HUMAN VALIDATED")).not.toBeInTheDocument();
+    expect(screen.getByText("HUMAN VALIDATED")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", {
-        name: "Validated diagnosis · human revision",
+        name: "Working diagnosis",
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Process Gap · Undetermined")).toBeInTheDocument();
+    expect(screen.getByText("Human-revised working diagnosis")).toBeInTheDocument();
     expect(screen.getByText("READY FOR DESIGN")).toBeInTheDocument();
     expect(screen.getByText("Revision approved")).toBeInTheDocument();
   });
@@ -641,6 +687,23 @@ describe("adversarial review states", () => {
       "unexpected response",
     );
     expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+  });
+
+  it("names a citation that is outside this signal's evidence instead of showing nothing", async () => {
+    const foreign: RecordState = {
+      ...proposed,
+      provider_hypothesis: {
+        ...proposed.provider_hypothesis,
+        supporting_evidence: [{ item_id: "ev_other_signal", evaluation_id: "eval_9" }],
+      },
+    };
+    route([foreign]);
+    render(<ReviewWorkspace />);
+    await loaded();
+    await userEvent.click(screen.getByRole("button", { name: /Evaluation eval_9/ }));
+    expect(screen.getByText("Citation not in this signal’s evidence")).toBeInTheDocument();
+    expect(screen.queryByText("synthetic.xlsx · QA · 2")).not.toBeInTheDocument();
+    expect(screen.queryByText("Next step unclear")).not.toBeInTheDocument();
   });
 
   it("shows source answer and deterministic result as separate pipeline fields", async () => {

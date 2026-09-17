@@ -1,37 +1,474 @@
-import { label, shortId } from "../lib/diagnostics";
-import type { DesignResult } from "../lib/designs";
+import { label } from "../lib/diagnostics";
+import type { DesignResult, ProviderMetadata } from "../lib/designs";
 
-// Every artifact below is an AI/fixture proposal. Nothing here is validated, aligned, or
-// approved: the M3 approval covers the diagnosis only, and alignment review (M6) has not run.
-export default function DesignWorkspace({ result }: { result: DesignResult }) {
+const origin = (fixture: boolean, meta: ProviderMetadata) =>
+  `Design origin: ${fixture ? "Controlled non-AI fixture" : "AI-generated proposal"} (${meta.provider}${meta.model ? ` / ${meta.model}` : ""})`;
+
+function Trace({ result }: { result: DesignResult }) {
+  const d = result.training_design;
   const decision = result.intervention;
-  const design = result.training_design;
-  const fixture = result.generation_mode === "controlled_fixture";
-  const origin = fixture ? "Controlled non-AI fixture" : "AI-generated proposal";
+  const diagnosis = result.approved_diagnosis;
   return (
-    <section className="design-workspace" aria-label="Proposed intervention design">
-      <div className="section-kicker">{fixture ? "CONTROLLED NON-AI DEMO PROPOSAL" : decision.decision_type === "training" ? "AI-GENERATED DESIGN PROPOSAL" : "AI-GENERATED INTERVENTION PROPOSAL"}</div>
-      <h2>Proposed intervention: {label(decision.decision_type)}</h2>
-      <p>{decision.rationale}</p>
-      <p className="quiet">Validated diagnosis {shortId(result.diagnosis_id)} · {result.approved_diagnosis.human_revised ? "Human revision used" : "Approved original used"} · Evidence: {decision.evidence_refs.map((ref) => shortId(ref.item_id)).join(", ")} · {origin} ({decision.provider_metadata.provider}{decision.provider_metadata.model ? ` / ${decision.provider_metadata.model}` : ""}) · Not human-validated</p>
-      {decision.risks.length > 0 && <><h3>Risks / limitations</h3><ul>{decision.risks.map((risk, i) => <li key={i}>{risk}</li>)}</ul></>}
-      {decision.decision_type === "investigate" && <><h3>Additional evidence required</h3><p>Current evidence is insufficient to select an intervention. No training has been designed; the questions below must be answered first.</p></>}
-      {decision.decision_type === "non_training" && <><h3>Training not selected</h3><p>The proposal is that a non-training action better addresses the validated diagnosis. No training outline, activities, practice, or rubric were generated.</p></>}
-      {decision.unresolved_questions.length > 0 && <><h3>{decision.decision_type === "investigate" ? "Open questions" : "Unresolved questions"}</h3><ul>{decision.unresolved_questions.map((question, i) => <li key={i}>{question}</li>)}</ul></>}
-      <h3>{design ? "Proposed next step" : "Proposed next actions"}</h3>
-      <ul>{decision.next_actions.map((action) => <li key={action.action_id}><strong>{action.title}</strong> — {action.instructions}</li>)}</ul>
-      {design && <>
-        <div className="ready">READY FOR ALIGNMENT REVIEW <span>→</span></div>
-        <p className="quiet">Proposed training design; not validated or alignment-reviewed. Structural references were checked; whether the design actually fits the diagnosis is an independent alignment review (M6). No learner has been scored.</p>
-        <h3>Performance problem / design context</h3><p>{design.performance_context}</p>
-        <h3>Target behaviors</h3><ul>{design.target_behaviors.map((b) => <li key={b.behavior_id}><strong>{shortId(b.behavior_id)}</strong> — {b.description}<div className="quiet">← Validated diagnosis {shortId(b.diagnosis_id)}</div></li>)}</ul>
-        <h3>Objectives</h3><ul>{design.objectives.map((o) => <li key={o.objective_id}><strong>{shortId(o.objective_id)}</strong> — {o.measurable_outcome}<div className="quiet">← Target behavior {o.behavior_ids.map(shortId).join(", ")}</div></li>)}</ul>
-        <h3>Training outline</h3><ol>{design.outline.map((s) => <li key={s.section_id}><strong>{s.title}</strong> ({s.duration_minutes} min) — {s.purpose}<div className="quiet">Objectives {s.objective_ids.map(shortId).join(", ")} · Activities {s.activity_ids.map(shortId).join(", ") || "none"}</div></li>)}</ol>
-        <h3>Proposed activities</h3>{design.activities.map((a) => <section key={a.activity_id} className="design-card"><h4>{shortId(a.activity_id)} · {label(a.activity_type)}</h4><p>{a.purpose}</p><p><strong>Instructions:</strong> {a.instructions}</p><p><strong>Expected:</strong> {a.expected_learner_behavior}</p><p><strong>Success:</strong> {a.success_indicator} · {a.duration_minutes} min</p><p className="quiet">→ Objectives {a.objective_ids.map(shortId).join(", ")}</p></section>)}
-        {design.decision_checks.length > 0 && <><h3>Decision checks</h3>{design.decision_checks.map((check) => <section key={check.check_id} className="design-card"><p>{check.situation}</p><h4>{check.question}</h4><ol>{check.options.map((option) => <li key={option.option_id}>{option.response} — {option.feedback}{option.correct && <strong> (intended correct response)</strong>}</li>)}</ol><p className="quiet">→ Objectives {check.objective_ids.map(shortId).join(", ")}</p></section>)}</>}
-        <h3>Hands-on practice</h3>{design.practice_scenarios.map((scenario) => <section key={scenario.scenario_id} className="design-card"><h4>Proposed practice scenario: {scenario.title}</h4><p className="quiet">Simulation specification for a later interactive practice tool. Not run, not scored.</p><p><strong>Call driver:</strong> {scenario.call_driver}</p><p><strong>Learner role:</strong> {scenario.learner_role} · <strong>Objective:</strong> {scenario.learner_objective}</p><p><strong>Persona (synthetic):</strong> {scenario.persona.name} — {scenario.persona.context} {scenario.persona.communication_style} Tone: {scenario.persona.emotional_state}.</p><p><strong>Persona knows / wants:</strong> {scenario.persona.knows} / {scenario.persona.wants}</p><p><strong>Do not volunteer:</strong> {scenario.persona.withholding}</p><p><strong>If the learner succeeds:</strong> {scenario.persona.success_response} <strong>If the learner does not:</strong> {scenario.persona.failure_response}</p><p><strong>Opening line:</strong> “{scenario.opening_line}”</p><h4>Conversation beats</h4><ol>{scenario.beats.map((beat) => <li key={beat.beat_id}>{beat.trigger} Likely response: “{beat.likely_response}” If successful: {beat.success_branch} If challenged: {beat.challenge_branch}</li>)}</ol><p><strong>Completion:</strong> {scenario.completion_criteria.join(" ")}</p><h4>Practice rubric</h4><ul>{scenario.rubric.map((r) => <li key={r.criterion_id}><strong>{shortId(r.criterion_id)}</strong> — {r.practice_behavior} Success: {r.observable_success} Scoring: {r.scoring_guidance}<div className="quiet">→ Target behavior {shortId(r.behavior_id)} → Objective {shortId(r.objective_id)} ← Validated diagnosis</div></li>)}</ul><h4>Debrief</h4><ul>{scenario.debrief_prompts.map((prompt, i) => <li key={i}>{prompt}</li>)}</ul><p className="quiet">Scenario {shortId(scenario.scenario_id)} → Activity {shortId(scenario.activity_id)} · Behaviors {scenario.behavior_ids.map(shortId).join(", ")}</p></section>)}
-        <p className="quiet">Design origin: {origin} ({design.provider_metadata.provider}{design.provider_metadata.model ? ` / ${design.provider_metadata.model}` : ""}). Awaiting independent alignment review.</p>
-      </>}
+    <details className="design-trace">
+      <summary>View trace, evidence &amp; provenance</summary>
+      <div className="trace-content">
+        <p>
+          Source QA evidence → observed signal →{" "}
+          {diagnosis.human_revised
+            ? "human-revised"
+            : "reviewer-approved original"}{" "}
+          working diagnosis → proposed intervention
+          {d
+            ? " → target behavior → objective → activity → practice → rubric"
+            : ""}
+          .
+        </p>
+        <dl>
+          <div>
+            <dt>Observed signal ID</dt>
+            <dd>{diagnosis.signal_id}</dd>
+          </div>
+          <div>
+            <dt>Validated diagnosis ID</dt>
+            <dd>{diagnosis.hypothesis_id}</dd>
+          </div>
+          <div>
+            <dt>Design run ID</dt>
+            <dd>{result.run_id}</dd>
+          </div>
+          <div>
+            <dt>Intervention evidence</dt>
+            <dd>
+              {decision.evidence_refs
+                .map(
+                  (r) =>
+                    `${r.item_id}${r.evaluation_id ? ` / ${r.evaluation_id}` : ""}`,
+                )
+                .join("; ")}
+            </dd>
+          </div>
+          <div>
+            <dt>Diagnostic supporting evidence</dt>
+            <dd>
+              {diagnosis.diagnosis.supporting_evidence
+                .map((r) => r.item_id)
+                .join("; ") || "None cited"}
+            </dd>
+          </div>
+          <div>
+            <dt>Diagnostic conflicting evidence</dt>
+            <dd>
+              {diagnosis.diagnosis.conflicting_evidence
+                .map((r) => r.item_id)
+                .join("; ") || "None cited"}
+            </dd>
+          </div>
+          <div>
+            <dt>Decision provider</dt>
+            <dd>
+              {decision.provider_metadata.provider}
+              {decision.provider_metadata.model &&
+                ` / ${decision.provider_metadata.model}`}
+            </dd>
+          </div>
+          {d && (
+            <div>
+              <dt>Design context</dt>
+              <dd>{d.performance_context}</dd>
+            </div>
+          )}
+          {d && (
+            <div>
+              <dt>Training provider</dt>
+              <dd>
+                {d.provider_metadata.provider}
+                {d.provider_metadata.model && ` / ${d.provider_metadata.model}`}
+              </dd>
+            </div>
+          )}
+        </dl>
+        {d && (
+          <>
+            <h4>Artifact references</h4>
+            <ul className="trace-references">
+              {d.target_behaviors.map((b) => (
+                <li key={b.behavior_id}>
+                  Behavior {b.behavior_id} ← diagnosis {b.diagnosis_id}
+                </li>
+              ))}
+              {d.objectives.map((o) => (
+                <li key={o.objective_id}>
+                  Objective {o.objective_id} ← behavior{" "}
+                  {o.behavior_ids.join(", ")}
+                </li>
+              ))}
+              {d.outline.map((s) => (
+                <li key={s.section_id}>
+                  Section {s.section_id} → objectives{" "}
+                  {s.objective_ids.join(", ")} → activities{" "}
+                  {s.activity_ids.join(", ") || "none"}
+                </li>
+              ))}
+              {d.activities.map((a) => (
+                <li key={a.activity_id}>
+                  Activity {a.activity_id} ← objectives{" "}
+                  {a.objective_ids.join(", ")}
+                </li>
+              ))}
+              {d.decision_checks.map((c) => (
+                <li key={c.check_id}>
+                  Decision check {c.check_id} ← objectives{" "}
+                  {c.objective_ids.join(", ")}; options{" "}
+                  {c.options.map((o) => o.option_id).join(", ")}
+                </li>
+              ))}
+              {d.practice_scenarios.map((s) => (
+                <li key={s.scenario_id}>
+                  Practice {s.scenario_id} ← activity {s.activity_id}; behaviors{" "}
+                  {s.behavior_ids.join(", ")}; objectives{" "}
+                  {s.objective_ids.join(", ")}; persona {s.persona.persona_id};
+                  beats {s.beats.map((b) => b.beat_id).join(", ")}; rubric{" "}
+                  {s.rubric
+                    .map(
+                      (r) =>
+                        `${r.criterion_id} → ${r.behavior_id} / ${r.objective_id}`,
+                    )
+                    .join(", ")}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        <p>
+          Structural references were checked; whether the design actually fits
+          the diagnosis is an independent alignment review (M6).
+        </p>
+        <p>The intervention proposal has not been human validated.</p>
+      </div>
+    </details>
+  );
+}
+
+export default function DesignWorkspace({
+  result,
+  signalLabel,
+}: {
+  result: DesignResult;
+  signalLabel?: string;
+}) {
+  const decision = result.intervention;
+  const d = result.training_design;
+  const fixture = result.generation_mode === "controlled_fixture";
+  const diagnosis = result.approved_diagnosis.diagnosis;
+  const minutes = d?.outline.reduce((sum, s) => sum + s.duration_minutes, 0);
+  return (
+    <section
+      className="design-workspace"
+      aria-label="Proposed intervention design"
+    >
+      <header className="design-hero">
+        <span className="section-kicker">
+          {fixture
+            ? "CONTROLLED NON-AI DEMO PROPOSAL"
+            : "AI-GENERATED INTERVENTION PROPOSAL"}
+        </span>
+        <div className="design-status" role="status">
+          {d
+            ? "READY FOR ALIGNMENT REVIEW"
+            : decision.decision_type === "non_training"
+              ? "TRAINING NOT SELECTED"
+              : "MORE EVIDENCE NEEDED"}
+        </div>
+        <h2>
+          {d
+            ? "Targeted learning intervention"
+            : decision.decision_type === "non_training"
+              ? "Operational intervention proposed"
+              : "Investigate before selecting an intervention"}
+        </h2>
+        <p className="design-problem">
+          {signalLabel ?? diagnosis.observed_behavioral_defect}
+        </p>
+        {signalLabel && (
+          <p className="design-observation">
+            {diagnosis.observed_behavioral_defect}
+          </p>
+        )}
+        <div className="design-summary-meta">
+          <span>
+            Working diagnosis: {label(diagnosis.cause_domain)} ·{" "}
+            {label(diagnosis.performance_dimension)} <b>Human validated</b>
+          </span>
+          {d && <span>{minutes} min learning plan</span>}
+        </div>
+        <p className="design-status-note">
+          {d
+            ? "Proposed training design; awaiting independent alignment review. No learner has been scored."
+            : decision.decision_type === "non_training"
+              ? "No training outline, activities, practice, or rubric were generated."
+              : "Current evidence is insufficient to select an intervention. No training has been designed."}
+        </p>
+        <p className="design-origin">
+          {origin(fixture, decision.provider_metadata)}
+        </p>
+      </header>
+      <section className="design-section">
+        <span className="eyebrow">Why this {d ? "training" : "decision"}?</span>
+        <h3>Intervention rationale</h3>
+        <p>{decision.rationale}</p>
+      </section>
+      {d && (
+        <>
+          <section className="design-section target-section">
+            <span className="eyebrow">Target behavior</span>
+            <h3>What the learner needs to do</h3>
+            {d.target_behaviors.map((b) => (
+              <p className="target-statement" key={b.behavior_id}>
+                {b.description}
+              </p>
+            ))}
+          </section>
+          <section className="design-section">
+            <span className="eyebrow">Objectives</span>
+            <h3>What the learner should demonstrate</h3>
+            <ul className="objective-list">
+              {d.objectives.map((o) => (
+                <li key={o.objective_id}>{o.measurable_outcome}</li>
+              ))}
+            </ul>
+          </section>
+          <section className="design-section">
+            <span className="eyebrow">Training outline</span>
+            <h3>Learning plan</h3>
+            <ol className="learning-plan">
+              {d.outline.map((s, i) => (
+                <li key={s.section_id}>
+                  <span className="plan-number">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div>
+                    <h4>{s.title}</h4>
+                    <p>{s.purpose}</p>
+                    {s.activity_ids.map((id) => {
+                      const a = d.activities.find(
+                        (item) => item.activity_id === id,
+                      );
+                      return (
+                        a && (
+                          <div className="plan-activity" key={id}>
+                            <span>{label(a.activity_type)}</span>
+                            <strong>{a.purpose}</strong>
+                            <p>{a.instructions}</p>
+                          </div>
+                        )
+                      );
+                    })}
+                  </div>
+                  <span className="plan-duration">
+                    {s.duration_minutes} min
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+          <section className="design-section">
+            <span className="eyebrow">Proposed activities</span>
+            <h3>What the learner will do</h3>
+            {d.activities.map((a) => (
+              <article
+                key={a.activity_id}
+                className="design-card activity-card"
+              >
+                <div className="activity-heading">
+                  <span>{label(a.activity_type)}</span>
+                  <span>{a.duration_minutes} min</span>
+                </div>
+                <h4>{a.purpose}</h4>
+                <dl>
+                  <div>
+                    <dt>Instructions</dt>
+                    <dd>{a.instructions}</dd>
+                  </div>
+                  <div>
+                    <dt>Expected behavior</dt>
+                    <dd>{a.expected_learner_behavior}</dd>
+                  </div>
+                  <div>
+                    <dt>Success indicator</dt>
+                    <dd>{a.success_indicator}</dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+          </section>
+          {d.decision_checks.length > 0 && (
+            <section className="design-section">
+              <span className="eyebrow">
+                Design preview · not a learner assessment
+              </span>
+              <h3>Decision checks</h3>
+              {d.decision_checks.map((c) => (
+                <article
+                  key={c.check_id}
+                  className="design-card decision-check"
+                >
+                  <p className="quiet">{c.situation}</p>
+                  <h4>{c.question}</h4>
+                  <ol>
+                    {c.options.map((o) => (
+                      <li key={o.option_id}>
+                        <span>{o.response}</span>
+                        {o.correct && (
+                          <strong className="correct-label">
+                            (intended correct response)
+                          </strong>
+                        )}
+                        <p>Feedback: {o.feedback}</p>
+                      </li>
+                    ))}
+                  </ol>
+                </article>
+              ))}
+            </section>
+          )}
+          <section className="design-section">
+            <span className="eyebrow">Hands-on practice</span>
+            <h3>The practice CoachLens proposed</h3>
+            {d.practice_scenarios.map((s) => (
+              <article key={s.scenario_id} className="practice-card">
+                <div className="practice-head">
+                  <div>
+                    <span className="eyebrow">
+                      Proposed simulation specification
+                    </span>
+                    <h4>{s.title}</h4>
+                    <p>{s.call_driver}</p>
+                  </div>
+                  <span>{s.learner_role}</span>
+                </div>
+                <div className="persona-intro">
+                  <strong>{s.persona.name}</strong>
+                  <p>
+                    {s.persona.context} · {s.persona.communication_style} ·{" "}
+                    {s.persona.emotional_state}
+                  </p>
+                  <blockquote>“{s.opening_line}”</blockquote>
+                </div>
+                <div className="practice-objective">
+                  <span className="field-label">Learner objective</span>
+                  <p>{s.learner_objective}</p>
+                </div>
+                <details className="practice-details">
+                  <summary>
+                    View scenario guidance and conversation beats
+                  </summary>
+                  <div className="practice-detail-grid">
+                    <p>
+                      <strong>Persona knows</strong>
+                      <br />
+                      {s.persona.knows}
+                    </p>
+                    <p>
+                      <strong>Persona wants</strong>
+                      <br />
+                      {s.persona.wants}
+                    </p>
+                    <p>
+                      <strong>Does not volunteer</strong>
+                      <br />
+                      {s.persona.withholding}
+                    </p>
+                    <p>
+                      <strong>If learner succeeds</strong>
+                      <br />
+                      {s.persona.success_response}
+                    </p>
+                    <p>
+                      <strong>If learner struggles</strong>
+                      <br />
+                      {s.persona.failure_response}
+                    </p>
+                  </div>
+                  <h5>Conversation beats</h5>
+                  <ol>
+                    {s.beats.map((b) => (
+                      <li key={b.beat_id}>
+                        <strong>{b.trigger}</strong>
+                        <p>Likely response: “{b.likely_response}”</p>
+                        <p>Success: {b.success_branch}</p>
+                        <p>Challenge: {b.challenge_branch}</p>
+                      </li>
+                    ))}
+                  </ol>
+                  <h5>Completion criteria</h5>
+                  <ul>
+                    {s.completion_criteria.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                  <h5>Debrief prompts</h5>
+                  <ul>
+                    {s.debrief_prompts.map((p, i) => (
+                      <li key={i}>{p}</li>
+                    ))}
+                  </ul>
+                </details>
+                <div className="rubric-section">
+                  <span className="eyebrow">Practice rubric</span>
+                  <h5>Success looks like</h5>
+                  {s.rubric.map((r) => (
+                    <div className="rubric-item" key={r.criterion_id}>
+                      <strong>{r.practice_behavior}</strong>
+                      <p>{r.observable_success}</p>
+                      <p className="quiet">
+                        Scoring guidance: {r.scoring_guidance}
+                      </p>
+                    </div>
+                  ))}
+                  <p className="no-score">No learner has been scored.</p>
+                </div>
+              </article>
+            ))}
+          </section>
+        </>
+      )}
+      <section className="design-section next-actions">
+        <span className="eyebrow">
+          {d ? "Next review step" : "Recommended next action"}
+        </span>
+        <h3>Proposed next actions</h3>
+        <ul>
+          {decision.next_actions.map((a) => (
+            <li key={a.action_id}>
+              <strong>{a.title}</strong>
+              <p>{a.instructions}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
+      {decision.risks.length > 0 && (
+        <section className="design-section">
+          <span className="eyebrow">Decision limits</span>
+          <h3>Risks / limitations</h3>
+          <ul>
+            {decision.risks.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {decision.unresolved_questions.length > 0 && (
+        <section className="design-section">
+          <span className="eyebrow">Evidence still needed</span>
+          <h3>Unresolved questions</h3>
+          <ul>
+            {decision.unresolved_questions.map((q, i) => (
+              <li key={i}>{q}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <Trace result={result} />
     </section>
   );
 }

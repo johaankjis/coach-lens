@@ -33,9 +33,37 @@ class UnavailableDesignProvider:
         raise DesignError("design_provider_unavailable", "No training provider is configured")
 
 
+def design_provider_kind(intervention: object, training: object) -> str:
+    """Classify the installed design providers from the objects, never from a label.
+
+    Mirrors M3 `provider_kind`: a fixture must declare `controlled_fixture = True` on itself.
+    Both unavailable is "unavailable"; fixtures (with or without an unavailable partner) are
+    "controlled_fixture"; anything else is a real "provider", so a remote provider can never
+    be reported or recorded as a non-AI fixture.
+    """
+    kinds = set()
+    for provider in (intervention, training):
+        if isinstance(provider, UnavailableDesignProvider):
+            kinds.add("unavailable")
+        elif getattr(provider, "controlled_fixture", False) is True:
+            kinds.add("controlled_fixture")
+        else:
+            kinds.add("provider")
+    if "provider" in kinds:
+        return "provider"
+    if "controlled_fixture" in kinds:
+        return "controlled_fixture"
+    return "unavailable"
+
+
 class DesignService:
     def __init__(self, diagnostics: DiagnosticService, intervention: InterventionReasoner,
                  training: TrainingDesigner, *, controlled_fixture: bool = False):
+        # `generation_mode` on every result and `/diagnostics/mode` derive from this flag, so
+        # it must agree with what the provider objects declare about themselves.
+        if controlled_fixture != (design_provider_kind(intervention, training) == "controlled_fixture"):
+            raise DesignError("provider_mismatch",
+                              "controlled_fixture flag disagrees with the installed design providers")
         self.diagnostics = diagnostics
         self.intervention = intervention
         self.training = training

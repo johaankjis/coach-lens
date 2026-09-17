@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.config import Settings
-from app.design.service import DesignService, UnavailableDesignProvider
+from app.design.demo import DemoDesignFixture
+from app.design.service import DesignError, DesignService, UnavailableDesignProvider
 from app.diagnostics.engine import (ControlledTestReasoner, DiagnosticError, DiagnosticService,
                                     UnavailableReasoner, build_bundle, detect_signals)
 from app.main import app
@@ -232,8 +233,9 @@ def test_mode_endpoint_reports_installed_providers_not_the_label(app_state):
     assert TestClient(app_state).get("/diagnostics/mode").json() == {
         "mode": "synthetic_demo", "diagnostic_provider": "unavailable",
         "design_provider": "unavailable", "evaluation_count": 0, "signal_count": 0}
+    fixture = DemoDesignFixture("sig_none")
     app_state.state.diagnostics = DiagnosticService([], ControlledTestReasoner({}))
-    app_state.state.designs = DesignService(app_state.state.diagnostics, unavailable, unavailable,
+    app_state.state.designs = DesignService(app_state.state.diagnostics, fixture, fixture,
                                             controlled_fixture=True)
     assert TestClient(app_state).get("/diagnostics/mode").json() == {
         "mode": "synthetic_demo", "diagnostic_provider": "controlled_fixture",
@@ -243,8 +245,45 @@ def test_mode_endpoint_reports_installed_providers_not_the_label(app_state):
         async def diagnose(self, bundle):
             return {}
 
+        async def decide(self, context):
+            return {}
+
+        async def design(self, context, decision):
+            return {}
+
     app_state.state.diagnostics = DiagnosticService([], SomeProvider())
     assert TestClient(app_state).get("/diagnostics/mode").json()["diagnostic_provider"] == "provider"
+    # A real provider beside a fixture or an unavailable partner is still a provider.
+    app_state.state.designs = DesignService(app_state.state.diagnostics, SomeProvider(), fixture)
+    assert TestClient(app_state).get("/diagnostics/mode").json()["design_provider"] == "provider"
+    app_state.state.designs = DesignService(app_state.state.diagnostics, unavailable, SomeProvider())
+    assert TestClient(app_state).get("/diagnostics/mode").json()["design_provider"] == "provider"
+
+
+def test_design_fixture_label_cannot_disagree_with_installed_providers():
+    """`generation_mode` and `/diagnostics/mode` derive from the objects, not a constructor flag."""
+    diagnostics = DiagnosticService([], UnavailableReasoner())
+    unavailable = UnavailableDesignProvider()
+    fixture = DemoDesignFixture("sig_none")
+
+    class RemoteLookingProvider:
+        async def decide(self, context):
+            return {}
+
+        async def design(self, context, decision):
+            return {}
+
+    for intervention, training in ((unavailable, unavailable),
+                                   (RemoteLookingProvider(), RemoteLookingProvider()),
+                                   (RemoteLookingProvider(), fixture)):
+        with pytest.raises(DesignError, match="controlled_fixture flag disagrees") as refused:
+            DesignService(diagnostics, intervention, training, controlled_fixture=True)
+        assert refused.value.code == "provider_mismatch"
+    with pytest.raises(DesignError, match="controlled_fixture flag disagrees"):
+        DesignService(diagnostics, fixture, fixture)  # A fixture may not pose as a provider either.
+    assert DesignService(diagnostics, fixture, fixture, controlled_fixture=True).controlled_fixture is True
+    assert DesignService(diagnostics, fixture, unavailable, controlled_fixture=True).controlled_fixture is True
+    assert DesignService(diagnostics, unavailable, unavailable).controlled_fixture is False
 
 
 def test_default_app_mode_is_unconfigured_with_no_providers():
