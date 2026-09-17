@@ -210,10 +210,11 @@ export async function api<T>(
   path: string,
   guard: (value: unknown) => value is T,
   options?: RequestInit,
+  base: "diagnostics" | "designs" = "diagnostics",
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`/api/diagnostics${path}`, {
+    response = await fetch(`/api/${base}${path}`, {
       ...options,
       cache: "no-store",
       headers: { "Content-Type": "application/json", ...options?.headers },
@@ -251,6 +252,14 @@ export async function api<T>(
         "This review changed or can no longer accept that action. Refresh the diagnosis.",
       backend_unavailable:
         "The diagnostic service is unavailable. Check the local API and try again.",
+      design_provider_unavailable:
+        "No design provider is configured. Use the controlled synthetic demo or configure a provider.",
+      invalid_design_output:
+        "The design provider returned invalid output. No design was saved.",
+      design_provider_failure:
+        "The design provider failed. No design was saved.",
+      diagnosis_not_approved:
+        "A human-approved diagnosis is required before design can start.",
     };
     throw new ApiError(
       response.status,

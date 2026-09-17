@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from app.config import get_settings
 from app.diagnostics.engine import DiagnosticService, detect_signals
+from app.design.demo import DemoDesignFixture
+from app.design.service import DesignService
 
 # Settings also read a local `.env`, so check the resolved value rather than the environment
 # alone. Refuse before `app.main` imports, because that import loads the configured records.
@@ -89,4 +91,6 @@ if __name__ == "__main__":
     resolution_signal_id = next(signal.signal_id for signal in detect_signals(evaluations)
                                 if signal.criterion == "Resolution summary clarity")
     app.state.diagnostics = DiagnosticService(evaluations, DemoFixtureReasoner(resolution_signal_id))
+    fixture = DemoDesignFixture(resolution_signal_id)
+    app.state.designs = DesignService(app.state.diagnostics, fixture, fixture, controlled_fixture=True)
     uvicorn.run(app, host="127.0.0.1", port=8000)

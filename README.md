@@ -1,6 +1,6 @@
 # CoachLens AI
 
-CoachLens AI is an evidence-driven performance diagnosis and training platform for the ResultsCX x AWS AI competition. Its planned workflow connects QA evidence to quantitative analysis, human-validated diagnosis, selected interventions, practice, and outcome measurement. Milestone 4 exposes M2 QA signals and M3 diagnoses in a human review workspace. It stops at Ready for Design.
+CoachLens AI is an evidence-driven performance diagnosis and training platform for the ResultsCX x AWS AI competition. Its planned workflow connects QA evidence to quantitative analysis, human-validated diagnosis, selected interventions, practice, and outcome measurement. Milestone 5 extends the review workspace from Ready for Design through a proposed intervention and, when appropriate, a training outline, activities, and practice specification. Training stops at Ready for Alignment Review.
 
 ## Repository structure
 
@@ -68,9 +68,9 @@ Profiling prints aggregates only. Normalization writes confidential row-level JS
 
 See [product spec](docs/product-spec.md) and [architecture](docs/architecture.md) for the intended later system.
 
-## M4 review workspace
+## M5 design flow and M4 review workspace
 
-The frontend runs at <http://localhost:3000> and proxies `/api/diagnostics/*` to the local FastAPI service at `http://127.0.0.1:8000` (override with `COACHLENS_API_ORIGIN`). For a safe end-to-end demo using **synthetic** QA records and a **fixed non-AI fixture**, run `PYTHONPATH=services/api services/api/.venv/bin/python scripts/run_m4_demo.py` from the repository root, then `npm --prefix apps/web run dev`. Demo hypotheses still pass through M3 validation and review transitions. See [the M4 guide](docs/m4-review-workspace.md) for the flow, privacy boundary, API additions, and limits.
+The frontend runs at <http://localhost:3000> and proxies `/api/diagnostics/*` and `/api/designs/*` to the local FastAPI service at `http://127.0.0.1:8000` (override with `COACHLENS_API_ORIGIN`). For a safe end-to-end demo using **synthetic** QA records and **fixed non-AI fixtures**, run `PYTHONPATH=services/api services/api/.venv/bin/python scripts/run_m4_demo.py` from the repository root, then `npm --prefix apps/web run dev`. Approve a diagnosis, then select **Design Intervention**. The resolution-clarity signal demonstrates training; the all-pass follow-up signal demonstrates the investigate branch. Demo outputs pass real validation. See [the M5 guide](docs/m5-training-orchestration.md) and [the M4 guide](docs/m4-review-workspace.md).
 
 ## M3 diagnostic engine
 
