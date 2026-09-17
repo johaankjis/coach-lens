@@ -89,6 +89,38 @@ def test_list_hypotheses_returns_signal_scoped_snapshots():
         svc.list_hypotheses("missing")
 
 
+def test_list_hypotheses_orders_newest_first_and_freezes_history():
+    source, signal, bundle = prepared()
+
+    class Sequence:
+        count = 0
+
+        async def diagnose(self, evidence_bundle):
+            self.count += 1
+            return response(bundle, hypothesis_id=f"hyp_{self.count}")
+
+    svc = DiagnosticService(source, Sequence())
+    for _ in range(3):
+        asyncio.run(svc.diagnose(signal.signal_id))
+    svc.approve("hyp_1", "lead")
+    svc.reject("hyp_2", "lead", "no")
+    listed = svc.list_hypotheses(signal.signal_id)
+    assert [r.provider_hypothesis.hypothesis_id for r in listed] == ["hyp_3", "hyp_2", "hyp_1"]
+    assert [r.status for r in listed] == ["awaiting_review", "rejected", "approved"]
+    # Nested audit objects in the listing are snapshots, not the stored history.
+    listed[2].events.clear()
+    listed[2].revision_approved = True
+    listed[1].events[0] = listed[1].events[0].model_copy(update={"reviewer_id": "tamper"})
+    with pytest.raises(ValidationError):
+        listed[2].provider_hypothesis.cause_domain = CauseDomain.SKILL_GAP
+    assert len(svc.get("hyp_1").events) == 1 and svc.get("hyp_1").revision_approved is False
+    assert svc.get("hyp_2").events[0].reviewer_id == "lead"
+    assert svc.get_approved_diagnosis("hyp_1").approved_by == "lead"
+    # The other signal never sees these records, and the listing is a read path only.
+    other = next(s for s in svc.list_signals() if s.signal_id != signal.signal_id)
+    assert svc.list_hypotheses(other.signal_id) == []
+
+
 def revision(bundle, **changes):
     fields = dict(observed_behavioral_defect="Two failed greeting checks", cause_domain="process_gap",
                   performance_dimension="undetermined", explanation="Human reviewer found a process issue.",

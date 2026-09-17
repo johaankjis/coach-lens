@@ -1,9 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   ApiError,
+  isEvidenceBundle,
+  isRecordList,
+  isRecordState,
+  isSignalList,
   label,
   shortId,
   validated,
@@ -105,27 +109,35 @@ function DiagnosisBody({
   diagnosis,
   confidence,
   demo = false,
+  human = false,
   onSelect,
 }: {
   diagnosis: Diagnosis;
   confidence?: string;
   demo?: boolean;
+  human?: boolean;
   onSelect: (reference: EvidenceReference) => void;
 }) {
   return (
     <>
       <div className="diagnosis-fields">
         <div>
-          <span className="field-label">Proposed cause</span>
+          <span className="field-label">
+            {human ? "Corrected cause" : "Proposed cause"}
+          </span>
           <strong>{label(diagnosis.cause_domain)}</strong>
         </div>
         <div>
-          <span className="field-label">Performance dimension</span>
+          <span className="field-label">
+            {human ? "Corrected dimension" : "Performance dimension"}
+          </span>
           <strong>{label(diagnosis.performance_dimension)}</strong>
         </div>
       </div>
       <div className="reasoning">
-        <span className="field-label">Reasoning / explanation</span>
+        <span className="field-label">
+          {human ? "Reviewer explanation" : "Reasoning / explanation"}
+        </span>
         <p>{diagnosis.explanation}</p>
       </div>
       {confidence !== undefined && (
@@ -196,6 +208,15 @@ function RevisionForm({
     missing_evidence: [...original.missing_evidence],
   }));
   const [rationale, setRationale] = useState("");
+  // Keep the textarea text verbatim while typing; it is split into list items on submit so
+  // newlines and spaces are not swallowed mid-edit.
+  const [missingText, setMissingText] = useState(() =>
+    original.missing_evidence.join("\n"),
+  );
+  const missingEvidence = missingText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
   const update = <K extends keyof Diagnosis>(field: K, value: Diagnosis[K]) =>
     setDraft((current) => ({ ...current, [field]: value }));
   const allReferences: EvidenceReference[] = [
@@ -226,7 +247,7 @@ function RevisionForm({
       className="revision-form"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit(draft, rationale);
+        onSubmit({ ...draft, missing_evidence: missingEvidence }, rationale);
       }}
     >
       <div className="section-title">
@@ -317,16 +338,8 @@ function RevisionForm({
       <label>
         Missing evidence / unanswered questions{" "}
         <textarea
-          value={draft.missing_evidence.join("\n")}
-          onChange={(event) =>
-            update(
-              "missing_evidence",
-              event.target.value
-                .split("\n")
-                .map((line) => line.trim())
-                .filter(Boolean),
-            )
-          }
+          value={missingText}
+          onChange={(event) => setMissingText(event.target.value)}
         />
         <span className="input-help">
           One item per line. Required if cause is Undetermined.
@@ -347,7 +360,10 @@ function RevisionForm({
         <button
           className="button primary"
           disabled={
-            busy || !reviewer.trim() || !draft.supporting_evidence.length
+            busy ||
+            !reviewer.trim() ||
+            !draft.supporting_evidence.length ||
+            (draft.cause_domain === "undetermined" && !missingEvidence.length)
           }
         >
           Save revision
@@ -373,6 +389,12 @@ export default function ReviewWorkspace() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signalError, setSignalError] = useState<string | null>(null);
+  // Async results are applied only to the signal that was selected when the request started.
+  const selectedRef = useRef<string | null>(null);
+  const busyRef = useRef(false);
+  useEffect(() => {
+    selectedRef.current = selectedId;
+  }, [selectedId]);
   const selectedSignal =
     signals.find((signal) => signal.signal_id === selectedId) ?? null;
   const record =
@@ -390,7 +412,7 @@ export default function ReviewWorkspace() {
 
   const loadSignals = useCallback(async () => {
     try {
-      const result = await api<Signal[]>("/signals");
+      const result = await api("/signals", isSignalList);
       setSignals(result);
       setLoadingSignal(true);
       setSelectedId((current) =>
@@ -413,8 +435,8 @@ export default function ReviewWorkspace() {
     if (!selectedId) return;
     let cancelled = false;
     Promise.all([
-      api<EvidenceBundle>(`${signalPath(selectedId)}/review-evidence`),
-      api<RecordState[]>(`${signalPath(selectedId)}/hypotheses`),
+      api(`${signalPath(selectedId)}/review-evidence`, isEvidenceBundle),
+      api(`${signalPath(selectedId)}/hypotheses`, isRecordList),
     ])
       .then(([evidence, hypotheses]) => {
         if (cancelled) return;
@@ -434,28 +456,46 @@ export default function ReviewWorkspace() {
   }, [selectedId]);
 
   async function refreshRecord(id: string) {
-    const latest = await api<RecordState>(hypothesisPath(id));
+    const latest = await api(hypothesisPath(id), isRecordState);
     setRecords((current) =>
       current.map((item) =>
         item.provider_hypothesis.hypothesis_id === id ? latest : item,
       ),
     );
   }
-  async function generate() {
-    if (!selectedId) return;
+  function begin(): boolean {
+    if (busyRef.current) return false; // Ignore double clicks and overlapping mutations.
+    busyRef.current = true;
     setBusy(true);
     setError(null);
+    return true;
+  }
+  function finish() {
+    busyRef.current = false;
+    setBusy(false);
+  }
+  async function generate() {
+    const signalId = selectedId;
+    if (!signalId || !begin()) return;
     try {
-      const created = await api<RecordState>(
-        `${signalPath(selectedId)}/hypotheses`,
+      const created = await api(
+        `${signalPath(signalId)}/hypotheses`,
+        isRecordState,
         { method: "POST" },
       );
+      // A hypothesis created for a signal the reviewer has since left must not appear
+      // in another signal's history; the backend list reloads it when they return.
+      if (
+        selectedRef.current !== signalId ||
+        created.provider_hypothesis.signal_id !== signalId
+      )
+        return;
       setRecords((current) => [created, ...current]);
       setRecordId(created.provider_hypothesis.hypothesis_id);
     } catch (cause) {
-      setError((cause as Error).message);
+      if (selectedRef.current === signalId) setError((cause as Error).message);
     } finally {
-      setBusy(false);
+      finish();
     }
   }
   async function mutate(
@@ -463,10 +503,8 @@ export default function ReviewWorkspace() {
     revision?: Diagnosis,
     revisionRationale?: string,
   ) {
-    if (!record || !reviewer.trim()) return;
+    if (!record || !reviewer.trim() || !begin()) return;
     const id = record.provider_hypothesis.hypothesis_id;
-    setBusy(true);
-    setError(null);
     try {
       const body =
         kind === "revise"
@@ -478,7 +516,7 @@ export default function ReviewWorkspace() {
           : kind === "reject"
             ? { reviewer_id: reviewer.trim(), rationale }
             : { reviewer_id: reviewer.trim() };
-      const latest = await api<RecordState>(`${hypothesisPath(id)}/${kind}`, {
+      const latest = await api(`${hypothesisPath(id)}/${kind}`, isRecordState, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -499,7 +537,7 @@ export default function ReviewWorkspace() {
         }
       }
     } finally {
-      setBusy(false);
+      finish();
     }
   }
 
@@ -716,7 +754,11 @@ export default function ReviewWorkspace() {
                         <div>
                           <span>Diagnostic hypothesis</span>
                           <strong>
-                            {record ? "AI proposed" : "Not requested"}
+                            {!record
+                              ? "Not requested"
+                              : isDemo
+                                ? "Fixture proposed"
+                                : "AI proposed"}
                           </strong>
                         </div>
                         <i>→</i>
@@ -724,7 +766,9 @@ export default function ReviewWorkspace() {
                           <span>Human validation</span>
                           <strong>
                             {record && validated(record)
-                              ? "Approved"
+                              ? record.human_revision
+                                ? "Revision approved"
+                                : "Approved"
                               : record?.status === "rejected"
                                 ? "Rejected"
                                 : "Pending"}
@@ -810,19 +854,35 @@ export default function ReviewWorkspace() {
                               <h2>
                                 {record.status === "rejected"
                                   ? "Rejected diagnosis"
-                                  : validated(record)
-                                    ? "Reviewed hypothesis"
-                                    : "Awaiting human validation"}
+                                  : record.human_revision
+                                    ? "Original proposal, corrected by reviewer"
+                                    : validated(record)
+                                      ? "Human-validated hypothesis"
+                                      : "Awaiting human validation"}
                               </h2>
                             </div>
                             <span
-                              className={`status-badge ${validated(record) ? "validated" : record.status === "rejected" ? "rejected" : "pending"}`}
+                              className={`status-badge ${
+                                record.human_revision
+                                  ? record.revision_approved
+                                    ? "superseded"
+                                    : "pending"
+                                  : validated(record)
+                                    ? "validated"
+                                    : record.status === "rejected"
+                                      ? "rejected"
+                                      : "pending"
+                              }`}
                             >
-                              {validated(record)
-                                ? "HUMAN VALIDATED"
-                                : record.status === "rejected"
-                                  ? "REJECTED"
-                                  : "NOT YET VALIDATED"}
+                              {record.human_revision
+                                ? record.revision_approved
+                                  ? "SUPERSEDED · REVISION VALIDATED"
+                                  : "REVISED · NOT YET VALIDATED"
+                                : validated(record)
+                                  ? "HUMAN VALIDATED"
+                                  : record.status === "rejected"
+                                    ? "REJECTED"
+                                    : "NOT YET VALIDATED"}
                             </span>
                           </div>
                           <div className="behavior">
@@ -840,7 +900,11 @@ export default function ReviewWorkspace() {
                           </div>
                           {record.human_revision && (
                             <div className="revision-separation">
-                              <span>ORIGINAL AI PROPOSAL · PRESERVED</span>
+                              <span>
+                                {isDemo
+                                  ? "ORIGINAL FIXTURE PROPOSAL · PRESERVED"
+                                  : "ORIGINAL AI PROPOSAL · PRESERVED"}
+                              </span>
                               <p>
                                 The proposal below remains part of the audit
                                 history. The reviewer’s correction follows
@@ -891,6 +955,7 @@ export default function ReviewWorkspace() {
                             </div>
                             <DiagnosisBody
                               diagnosis={record.human_revision}
+                              human
                               onSelect={setSelectedEvidence}
                             />
                           </section>
@@ -902,11 +967,25 @@ export default function ReviewWorkspace() {
                           </div>
                           {validated(record) ? (
                             <>
-                              <h2>Validated diagnosis</h2>
+                              <h2>
+                                {record.human_revision
+                                  ? "Validated diagnosis · human revision"
+                                  : isDemo
+                                    ? "Validated diagnosis · demo proposal"
+                                    : "Validated diagnosis · AI proposal"}
+                              </h2>
                               <p>
-                                Accepted by an authorized reviewer for this
-                                workflow. This does not establish objective
-                                causal truth.
+                                A reviewer accepted{" "}
+                                <strong>
+                                  {label(currentDiagnosis!.cause_domain)} ·{" "}
+                                  {label(
+                                    currentDiagnosis!.performance_dimension,
+                                  )}
+                                </strong>{" "}
+                                for this workflow. Approval records a human
+                                decision; it does not establish objective causal
+                                truth, and reviewer identifiers are not
+                                authenticated.
                               </p>
                               <div className="decision-meta">
                                 Approved by{" "}

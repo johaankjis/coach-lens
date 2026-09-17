@@ -6,15 +6,17 @@ entry point; the normal API app retains its unavailable provider default.
 
 from datetime import date
 from decimal import Decimal
-import os
 from uuid import uuid4
 
+from app.config import get_settings
 from app.diagnostics.engine import DiagnosticService, detect_signals
 
-if os.environ.get("COACHLENS_API_DIAGNOSTIC_EVALUATIONS_PATH"):
+# Settings also read a local `.env`, so check the resolved value rather than the environment
+# alone. Refuse before `app.main` imports, because that import loads the configured records.
+if get_settings().diagnostic_evaluations_path is not None:
     raise SystemExit("M4 synthetic demo refuses a real evaluations path")
 
-from app.main import app
+from app.main import app  # noqa: E402
 from app.results_cx.models import CriterionResult, Domain, Evaluation, SourceLineage
 import uvicorn
 

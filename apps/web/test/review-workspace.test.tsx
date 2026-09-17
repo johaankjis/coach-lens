@@ -267,8 +267,13 @@ describe("diagnostic review semantics", () => {
     expect(
       screen.getByText("Reviewer found a process issue."),
     ).toBeInTheDocument();
-    expect(screen.getByText("NOT YET VALIDATED")).toBeInTheDocument();
+    expect(screen.getByText("REVISED · NOT YET VALIDATED")).toBeInTheDocument();
+    expect(screen.getByText(/PENDING APPROVAL/)).toBeInTheDocument();
+    expect(screen.queryByText("HUMAN VALIDATED")).not.toBeInTheDocument();
     expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Approve human revision" }),
+    ).toBeInTheDocument();
     expect(mock).toHaveBeenCalledWith(
       expect.stringContaining("/revise"),
       expect.anything(),
@@ -449,5 +454,198 @@ describe("diagnostic review semantics", () => {
     expect(
       screen.queryByText("Model-reported confidence"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("adversarial review states", () => {
+  const second: Signal = {
+    ...signal,
+    signal_id: "sig_2",
+    criterion: "Follow-up documented",
+    fail_count: 0,
+    pass_count: 2,
+    fail_rate: "0",
+    feedback_count: 0,
+  };
+
+  it("drops a hypothesis created for a signal the reviewer has since left", async () => {
+    let finish!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        if (init?.method === "POST") return pending;
+        if (path.endsWith("/signals")) return reply([signal, second]);
+        if (path.endsWith("/review-evidence"))
+          return reply(
+            path.includes("sig_2") ? { signal: second, items: [] } : evidence,
+          );
+        return reply([]);
+      }),
+    );
+    render(<ReviewWorkspace />);
+    await screen.findByText("No hypothesis for this signal yet.");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Request diagnostic hypothesis" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Follow-up documented/ }),
+    );
+    await screen.findByRole("heading", { name: "Follow-up documented" });
+    finish(reply(proposed)); // Belongs to sig_1, resolved while sig_2 is open.
+    await screen.findByRole("button", {
+      name: "Request diagnostic hypothesis",
+    });
+    expect(
+      screen.queryByText("Provider proposed a skill gap."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Skill Gap")).not.toBeInTheDocument();
+  });
+
+  it("sends a single approval for a double click", async () => {
+    let finish!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const mock = route([proposed], async () => pending);
+    render(<ReviewWorkspace />);
+    await loaded();
+    await userEvent.type(
+      screen.getByPlaceholderText("Your reviewer ID"),
+      "qa-1",
+    );
+    const approve = screen.getByRole("button", { name: "Approve diagnosis" });
+    await userEvent.dblClick(approve);
+    fireEvent.click(approve);
+    finish(reply({ ...proposed, status: "approved" }));
+    await screen.findByText("HUMAN VALIDATED");
+    const posts = mock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+    );
+    expect(posts).toHaveLength(1);
+  });
+
+  it("submits multi-line missing evidence from the revision form verbatim", async () => {
+    const mock = route([proposed], async (path, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect(path.endsWith("/revise")).toBe(true);
+      expect(body.revision.missing_evidence).toEqual([
+        "Observe a live call",
+        "Second open question",
+      ]);
+      return reply({
+        ...proposed,
+        status: "revised",
+        human_revision: { ...proposed.provider_hypothesis, ...body.revision },
+      });
+    });
+    render(<ReviewWorkspace />);
+    await loaded();
+    await userEvent.type(
+      screen.getByPlaceholderText("Your reviewer ID"),
+      "qa-1",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Revise" }));
+    await userEvent.type(
+      screen.getByLabelText(/Missing evidence \/ unanswered questions/),
+      "{End}{Enter}Second open question",
+    );
+    await userEvent.type(
+      screen.getByLabelText("Reason for revision"),
+      "More questions",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save revision" }),
+    );
+    await screen.findByText("Reviewer correction");
+    expect(screen.getByText("Second open question")).toBeInTheDocument();
+    expect(mock).toHaveBeenCalledWith(
+      expect.stringContaining("/revise"),
+      expect.anything(),
+    );
+  });
+
+  it("marks an approved revision validated without re-labelling the AI proposal", async () => {
+    route([
+      {
+        ...proposed,
+        status: "revised",
+        revision_approved: true,
+        human_revision: {
+          ...proposed.provider_hypothesis,
+          cause_domain: "process_gap",
+          performance_dimension: "undetermined",
+          explanation: "Reviewer found a process issue.",
+        },
+        events: [
+          {
+            action: "revise",
+            reviewer_id: "qa-1",
+            occurred_at: "2026-09-17T12:00:00Z",
+            rationale: "Process evidence",
+          },
+          {
+            action: "approve",
+            reviewer_id: "lead-1",
+            occurred_at: "2026-09-17T12:05:00Z",
+            rationale: null,
+          },
+        ],
+      },
+    ]);
+    render(<ReviewWorkspace />);
+    await loaded();
+    expect(
+      screen.getByText("SUPERSEDED · REVISION VALIDATED"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("HUMAN VALIDATED")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: "Validated diagnosis · human revision",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Process Gap · Undetermined")).toBeInTheDocument();
+    expect(screen.getByText("READY FOR DESIGN")).toBeInTheDocument();
+    expect(screen.getByText("Revision approved")).toBeInTheDocument();
+  });
+
+  it("refuses malformed records instead of rendering them as validated", async () => {
+    route([
+      {
+        ...proposed,
+        status: "approved",
+        provider_hypothesis: { hypothesis_id: "hyp_1" },
+      } as unknown as RecordState,
+    ]);
+    render(<ReviewWorkspace />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "unexpected response",
+    );
+    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("HUMAN VALIDATED")).not.toBeInTheDocument();
+  });
+
+  it("does not validate on an unknown status value", async () => {
+    route([{ ...proposed, status: "validated" } as unknown as RecordState]);
+    render(<ReviewWorkspace />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "unexpected response",
+    );
+    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+  });
+
+  it("shows source answer and deterministic result as separate pipeline fields", async () => {
+    route();
+    render(<ReviewWorkspace />);
+    await loaded();
+    await userEvent.click(
+      within(
+        screen.getByRole("complementary", { name: "Evidence inspector" }),
+      ).getByRole("button", { name: /Evaluation eval_2/ }),
+    );
+    expect(screen.getByText("Yes · Pass")).toBeInTheDocument();
+    expect(screen.getByText("Source answer / result")).toBeInTheDocument();
   });
 });
