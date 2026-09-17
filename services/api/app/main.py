@@ -33,6 +33,7 @@ def _local_evaluations() -> list[Evaluation]:
 
 
 app.state.diagnostics = DiagnosticService(_local_evaluations(), UnavailableReasoner())
+app.state.demo_mode = "local_normalized" if settings.diagnostic_evaluations_path else "unconfigured"
 unavailable_design = UnavailableDesignProvider()
 app.state.designs = DesignService(app.state.diagnostics, unavailable_design, unavailable_design)
 app.include_router(diagnostics_router)

@@ -42,6 +42,14 @@ def signals(svc: DiagnosticService = Depends(service)):
     return svc.list_signals()
 
 
+@router.get("/mode")
+def mode(request: Request):
+    """Non-sensitive operator-visible provenance for the running process."""
+    return {"mode": request.app.state.demo_mode,
+            "diagnostic_provider": "controlled_fixture" if request.app.state.demo_mode == "synthetic_demo"
+            else "unavailable"}
+
+
 @router.get("/signals/{signal_id}/evidence")
 def evidence(signal_id: str, svc: DiagnosticService = Depends(service)):
     try:
