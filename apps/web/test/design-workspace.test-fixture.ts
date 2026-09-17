@@ -11,7 +11,8 @@ export function designFixture(kind: "training" | "non_training" | "investigate" 
       rationale: kind === "training" ? "Practice the resolution summary." : "Training is not supported by this evidence.",
       evidence_refs: [{ item_id: "ev_1", evaluation_id: "eval_1" }], risks: ["Limited sample"],
       unresolved_questions: kind === "investigate" ? ["Observe another call"] : [],
-      next_actions: [{ action_id: `${run}/N1`, title: "Review next step", instructions: "Discuss with supervisor" }] },
+      next_actions: [{ action_id: `${run}/N1`, title: "Review next step", instructions: "Discuss with supervisor" }],
+      provider_metadata: { provider: "test-fixture", model: null } },
     training_design: kind !== "training" ? null : {
       run_id: run, diagnosis_id: "hyp_1", performance_context: "Proposed response to validated clarity diagnosis",
       target_behaviors: [{ behavior_id: `${run}/B1`, diagnosis_id: "hyp_1", description: "State next step and check understanding" }],
@@ -24,6 +25,7 @@ export function designFixture(kind: "training" | "non_training" | "investigate" 
         learner_objective: "Confirm understanding", opening_line: "What happens next?", behavior_ids: [`${run}/B1`], objective_ids: [`${run}/O1`], activity_id: `${run}/A1`,
         beats: [{ beat_id: `${run}/BEAT1`, trigger: "Vague response", likely_response: "When?", success_branch: "Ask to confirm", challenge_branch: "Ask again" }],
         completion_criteria: ["Member confirms"], rubric: [{ criterion_id: `${run}/R1`, behavior_id: `${run}/B1`, objective_id: `${run}/O1`, practice_behavior: "Summarize and confirm", observable_success: "Clear next step and check", scoring_guidance: "Met if both occur" }], debrief_prompts: ["What was clear?"] }],
+      provider_metadata: { provider: "test-fixture", model: null },
     },
   };
 }

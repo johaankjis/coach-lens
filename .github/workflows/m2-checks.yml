@@ -3,7 +3,7 @@ name: CoachLens checks
 on:
   pull_request:
   push:
-    branches: [main, feat/m2-data-foundation, review/m2-data-foundation, feat/m3-diagnostic-engine, review/m3-diagnostic-engine, feat/m4-review-workspace, review/m4-review-workspace]
+    branches: [main, feat/m2-data-foundation, review/m2-data-foundation, feat/m3-diagnostic-engine, review/m3-diagnostic-engine, feat/m4-review-workspace, review/m4-review-workspace, feat/m5-training-orchestration, review/m5-training-orchestration]
 
 jobs:
   checks:

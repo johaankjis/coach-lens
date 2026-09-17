@@ -7,10 +7,16 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from app.diagnostics.models import (ApprovedDiagnosis, EvidenceReference, FrozenModel,
-                                    MAX_ID_LENGTH, MAX_TEXT_LENGTH)
+                                    MAX_ID_LENGTH, MAX_LIST_LENGTH, MAX_TEXT_LENGTH,
+                                    ProviderMetadata)
 
 DesignId = Annotated[str, Field(min_length=1, max_length=MAX_ID_LENGTH)]
 DesignText = Annotated[str, Field(min_length=1, max_length=MAX_TEXT_LENGTH)]
+# List bounds are storage-safety limits on untrusted provider output, like M3's.
+MAX_ITEMS = MAX_LIST_LENGTH
+
+# Placeholder substituted for the reviewer identifier in provider-facing input.
+REDACTED_REVIEWER = "[reviewer]"
 
 
 class DecisionType(StrEnum):
@@ -29,6 +35,15 @@ class DesignInput(FrozenModel):
     allowed_evidence: tuple[EvidenceReference, ...]
     revision_rationale: str | None = None
 
+    def provider_view(self) -> "DesignInput":
+        """Fresh copy for a provider: the reviewer identifier is not needed to design.
+
+        Diagnosis text, missing-evidence entries, and the revision rationale still cross
+        this boundary verbatim; see the M5 privacy boundary before using a remote provider.
+        """
+        approved = self.approved.model_copy(update={"approved_by": REDACTED_REVIEWER}, deep=True)
+        return self.model_copy(update={"approved": approved}, deep=True)
+
 
 class NextAction(FrozenModel):
     action_id: DesignId
@@ -41,10 +56,13 @@ class InterventionDecision(FrozenModel):
     diagnosis_id: DesignId
     decision_type: DecisionType
     rationale: DesignText
-    evidence_refs: tuple[EvidenceReference, ...] = Field(min_length=1)
-    risks: tuple[DesignText, ...] = ()
-    unresolved_questions: tuple[DesignText, ...] = ()
-    next_actions: tuple[NextAction, ...] = Field(min_length=1)
+    evidence_refs: tuple[EvidenceReference, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    risks: tuple[DesignText, ...] = Field(default=(), max_length=MAX_ITEMS)
+    unresolved_questions: tuple[DesignText, ...] = Field(default=(), max_length=MAX_ITEMS)
+    next_actions: tuple[NextAction, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    # Provider self-identification for audit. It is not a trust signal: the service, not
+    # the provider, assigns `DesignResult.generation_mode`.
+    provider_metadata: ProviderMetadata
 
 
 class TargetBehavior(FrozenModel):
@@ -55,7 +73,7 @@ class TargetBehavior(FrozenModel):
 
 class Objective(FrozenModel):
     objective_id: DesignId
-    behavior_ids: tuple[DesignId, ...] = Field(min_length=1)
+    behavior_ids: tuple[DesignId, ...] = Field(min_length=1, max_length=MAX_ITEMS)
     measurable_outcome: DesignText
 
 
@@ -64,7 +82,7 @@ class Activity(FrozenModel):
     activity_type: DesignText
     purpose: DesignText
     instructions: DesignText
-    objective_ids: tuple[DesignId, ...] = Field(min_length=1)
+    objective_ids: tuple[DesignId, ...] = Field(min_length=1, max_length=MAX_ITEMS)
     expected_learner_behavior: DesignText
     success_indicator: DesignText
     duration_minutes: int = Field(gt=0, le=240)
@@ -75,8 +93,8 @@ class OutlineSection(FrozenModel):
     title: DesignText
     purpose: DesignText
     duration_minutes: int = Field(gt=0, le=240)
-    objective_ids: tuple[DesignId, ...] = Field(min_length=1)
-    activity_ids: tuple[DesignId, ...] = ()
+    objective_ids: tuple[DesignId, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    activity_ids: tuple[DesignId, ...] = Field(default=(), max_length=MAX_ITEMS)
 
 
 class CheckOption(FrozenModel):
@@ -88,7 +106,7 @@ class CheckOption(FrozenModel):
 
 class DecisionCheck(FrozenModel):
     check_id: DesignId
-    objective_ids: tuple[DesignId, ...] = Field(min_length=1)
+    objective_ids: tuple[DesignId, ...] = Field(min_length=1, max_length=MAX_ITEMS)
     situation: DesignText
     question: DesignText
     options: tuple[CheckOption, ...] = Field(min_length=4, max_length=4)
@@ -132,25 +150,26 @@ class PracticeScenario(FrozenModel):
     persona: Persona
     learner_objective: DesignText
     opening_line: DesignText
-    behavior_ids: tuple[DesignId, ...] = Field(min_length=1)
-    objective_ids: tuple[DesignId, ...] = Field(min_length=1)
+    behavior_ids: tuple[DesignId, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    objective_ids: tuple[DesignId, ...] = Field(min_length=1, max_length=MAX_ITEMS)
     activity_id: DesignId
-    beats: tuple[ConversationBeat, ...] = Field(min_length=1)
-    completion_criteria: tuple[DesignText, ...] = Field(min_length=1)
-    rubric: tuple[RubricCriterion, ...] = Field(min_length=1)
-    debrief_prompts: tuple[DesignText, ...] = Field(min_length=1)
+    beats: tuple[ConversationBeat, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    completion_criteria: tuple[DesignText, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    rubric: tuple[RubricCriterion, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    debrief_prompts: tuple[DesignText, ...] = Field(min_length=1, max_length=MAX_ITEMS)
 
 
 class TrainingDesign(FrozenModel):
     run_id: DesignId
     diagnosis_id: DesignId
     performance_context: DesignText
-    target_behaviors: tuple[TargetBehavior, ...] = Field(min_length=1)
-    objectives: tuple[Objective, ...] = Field(min_length=1)
-    outline: tuple[OutlineSection, ...] = Field(min_length=1)
-    activities: tuple[Activity, ...] = Field(min_length=1)
-    decision_checks: tuple[DecisionCheck, ...] = ()
-    practice_scenarios: tuple[PracticeScenario, ...] = Field(min_length=1)
+    target_behaviors: tuple[TargetBehavior, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    objectives: tuple[Objective, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    outline: tuple[OutlineSection, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    activities: tuple[Activity, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    decision_checks: tuple[DecisionCheck, ...] = Field(default=(), max_length=MAX_ITEMS)
+    practice_scenarios: tuple[PracticeScenario, ...] = Field(min_length=1, max_length=MAX_ITEMS)
+    provider_metadata: ProviderMetadata
 
 
 class DesignResult(FrozenModel):

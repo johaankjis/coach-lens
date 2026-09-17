@@ -688,6 +688,28 @@ describe("M5 orchestration in the review workspace", () => {
     expect(mock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   });
 
+  it("drops a design that finishes after the reviewer switched to another hypothesis", async () => {
+    const other: RecordState = { ...approved, provider_hypothesis: { ...approved.provider_hypothesis, hypothesis_id: "hyp_2", explanation: "Second proposal." } };
+    let complete!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { complete = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("/signals")) return reply([signal]);
+      if (path.endsWith("/review-evidence")) return reply(evidence);
+      if (path.endsWith("/hypotheses")) return reply([approved, other]);
+      if (path.includes("/api/designs/") && init?.method === "POST") return pending;
+      if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
+      throw new Error(path);
+    }));
+    render(<ReviewWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "DESIGN INTERVENTION" }));
+    fireEvent.change(screen.getByLabelText("Review history"), { target: { value: "hyp_2" } });
+    expect(await screen.findByText("Second proposal.")).toBeInTheDocument();
+    complete(reply(designFixture()));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("READY FOR ALIGNMENT REVIEW")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("does not manufacture a design on failed or malformed API output", async () => {
     let response: unknown = { detail: { code: "invalid_design_output", message: "private" } };
     let status = 502;

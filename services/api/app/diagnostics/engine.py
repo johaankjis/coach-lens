@@ -120,20 +120,38 @@ def validate_citations(supporting: list[EvidenceReference], conflicting: list[Ev
         raise DiagnosticError("invalid_evidence_reference", "Evidence cannot support and conflict simultaneously")
 
 
-def _untrusted_payload(raw: object) -> object:
+def untrusted_payload(raw: object) -> object:
     """Reduce any boundary input to plain data so validation always runs on fresh objects.
 
     A pre-built model instance (including one from `model_construct` or a subclass) would
     otherwise pass through `model_validate` unvalidated and stay shared with the caller.
+    The reduction is recursive: a mapping whose nested values are model instances or
+    mutable containers is copied all the way down, so no provider-owned object survives
+    into the validated result. Anything that is not a mapping/model at the top level, or
+    that cannot be reduced, becomes `None` and fails validation.
     """
-    if isinstance(raw, BaseModel):
-        try:
-            return raw.model_dump(mode="python", warnings=False)
-        except Exception:
-            return None
-    if isinstance(raw, Mapping):
-        return dict(raw)
-    return None
+    try:
+        return _reduce(raw, depth=0) if isinstance(raw, (BaseModel, Mapping)) else None
+    except Exception:
+        return None
+
+
+_MAX_REDUCTION_DEPTH = 32  # Provider output is finite; deeper nesting is refused.
+
+
+def _reduce(value: object, depth: int) -> object:
+    if depth > _MAX_REDUCTION_DEPTH:
+        raise ValueError("Boundary payload is nested too deeply")
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="python", warnings=False)
+    if isinstance(value, Mapping):
+        return {str(key): _reduce(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_reduce(item, depth + 1) for item in value]
+    return value
+
+
+_untrusted_payload = untrusted_payload
 
 
 def validate_provider_output(raw: object, bundle: EvidenceBundle) -> DiagnosticHypothesis:

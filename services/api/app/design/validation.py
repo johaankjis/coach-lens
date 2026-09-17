@@ -1,8 +1,8 @@
 """Reject fabricated or cross-run references in untrusted design output."""
 
-from collections.abc import Mapping
+from pydantic import ValidationError
 
-from pydantic import BaseModel, ValidationError
+from app.diagnostics.engine import untrusted_payload
 
 from .models import DesignInput, DecisionType, InterventionDecision, TrainingDesign
 
@@ -11,20 +11,11 @@ class InvalidDesignOutput(ValueError):
     pass
 
 
-def _plain(raw: object) -> object:
-    if isinstance(raw, BaseModel):
-        try:
-            return raw.model_dump(mode="python", warnings=False)
-        except Exception:
-            return None
-    if isinstance(raw, Mapping):
-        return dict(raw)
-    return None
-
-
 def _parse(model, raw):
+    # The recursive reduction matters: a nested pre-built model instance inside a plain
+    # mapping would otherwise skip validation and stay shared with the provider.
     try:
-        return model.model_validate(_plain(raw))
+        return model.model_validate(untrusted_payload(raw))
     except (ValidationError, ValueError, TypeError) as exc:
         raise InvalidDesignOutput("Provider returned an invalid design artifact") from exc
 
@@ -114,8 +105,20 @@ def validate_training(raw: object, context: DesignInput) -> TrainingDesign:
                 raise InvalidDesignOutput("Rubric references outside practice")
             if criterion.behavior_id not in objective_by_id[criterion.objective_id].behavior_ids:
                 raise InvalidDesignOutput("Rubric breaks behavior-objective traceability")
+        # A behavior the practice claims to exercise but no criterion observes is unscorable.
+        if not {criterion.behavior_id for criterion in scenario.rubric} >= set(scenario.behavior_ids):
+            raise InvalidDesignOutput("Practice behavior has no rubric criterion")
+    # Coverage checks below are reference integrity only: every artifact must be reachable
+    # from the outline and every claimed behavior must be practiced and have a rubric criterion. Whether the
+    # content is pedagogically sound is M6's independent judgement, not established here.
     if not all(any(o.objective_id in a.objective_ids for a in design.activities) for o in design.objectives):
         raise InvalidDesignOutput("Every objective needs a proposed activity")
     if not all(any(b.behavior_id in o.behavior_ids for o in design.objectives) for b in design.target_behaviors):
         raise InvalidDesignOutput("Every target behavior needs an objective")
+    scheduled = {activity_id for section in design.outline for activity_id in section.activity_ids}
+    if not scheduled >= activities:
+        raise InvalidDesignOutput("Every activity must appear in the training outline")
+    practiced = {behavior_id for scenario in design.practice_scenarios for behavior_id in scenario.behavior_ids}
+    if not practiced >= behaviors:
+        raise InvalidDesignOutput("Every target behavior needs hands-on practice")
     return design

@@ -395,10 +395,14 @@ export default function ReviewWorkspace() {
   const [designing, setDesigning] = useState(false);
   // Async results are applied only to the signal that was selected when the request started.
   const selectedRef = useRef<string | null>(null);
+  const recordRef = useRef<string | null>(null);
   const busyRef = useRef(false);
   useEffect(() => {
     selectedRef.current = selectedId;
   }, [selectedId]);
+  useEffect(() => {
+    recordRef.current = recordId;
+  }, [recordId]);
   const selectedSignal =
     signals.find((signal) => signal.signal_id === selectedId) ?? null;
   const record =
@@ -562,9 +566,11 @@ export default function ReviewWorkspace() {
       const result = await api(`/diagnoses/${encodeURIComponent(id)}`, isDesignResult,
         { method: "POST" }, "designs");
       if (result.diagnosis_id !== id) throw new Error("The design response did not match the selected diagnosis.");
-      if (selectedRef.current === record.provider_hypothesis.signal_id) setDesignResult(result);
+      // A design that finished for a diagnosis the reviewer has since left must not render
+      // under another hypothesis; the effect above reloads it when they return.
+      if (selectedRef.current === record.provider_hypothesis.signal_id && recordRef.current === id) setDesignResult(result);
     } catch (cause) {
-      setError((cause as Error).message);
+      if (recordRef.current === id) setError((cause as Error).message);
     } finally {
       setDesigning(false);
       finish();

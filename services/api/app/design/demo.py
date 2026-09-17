@@ -1,7 +1,15 @@
 """Controlled synthetic M5 outputs. Not an AI provider or production default."""
 
 
+PROVIDER = {"provider": "m5-demo-fixture", "model": None}
+
+
 class DemoDesignFixture:
+    """Fixed synthetic outputs keyed only on the signal ID it was constructed with.
+
+    No inference and no cause-domain rule: the branch is a demo configuration choice.
+    """
+
     def __init__(self, training_signal_id: str, alternative: str = "investigate"):
         self.training_signal_id = training_signal_id
         self.alternative = alternative
@@ -22,6 +30,7 @@ class DemoDesignFixture:
             "next_actions": [{"action_id": run + "/N1", "title": ("Review proposed training" if training else "Review operational evidence"),
                               "instructions": ("Submit the design to independent alignment review."
                                                if training else "Collect observations and revisit the diagnosis.")}],
+            "provider_metadata": dict(PROVIDER),
         }
 
     async def design(self, context, decision):
@@ -74,4 +83,5 @@ class DemoDesignFixture:
                             "observable_success": "All three components occur before close, with a member response to the check.",
                             "scoring_guidance": "Met only when resolution, specific next action, and understanding check are explicit; otherwise not met."}],
                 "debrief_prompts": ["Which phrase made the next action clear?", "What did the member say after the understanding check?"]}],
+            "provider_metadata": dict(PROVIDER),
         }

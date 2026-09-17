@@ -70,17 +70,23 @@ class DesignService:
             if hypothesis_id in self._results:
                 return self.get(hypothesis_id)
             try:
-                raw_decision = await self.intervention.decide(context.model_copy(deep=True))
+                # Providers receive a minimized fresh copy each call; see DesignInput.provider_view.
+                raw_decision = await self.intervention.decide(context.provider_view())
                 decision = validate_decision(raw_decision, context)
                 training = None
                 if decision.decision_type == DecisionType.TRAINING:
-                    raw_training = await self.training.design(context.model_copy(deep=True),
+                    raw_training = await self.training.design(context.provider_view(),
                                                               decision.model_copy(deep=True))
                     training = validate_training(raw_training, context)
             except InvalidDesignOutput as exc:
                 raise DesignError("invalid_design_output", "Design provider returned invalid output") from exc
-            except DesignError:
-                raise
+            except DesignError as exc:
+                # Only the service's own "not configured" signal passes through. Any other
+                # provider-raised DesignError is treated as a failure so its text never
+                # reaches a client response.
+                if exc.code == "design_provider_unavailable":
+                    raise
+                raise DesignError("design_provider_failure", "Design provider failed") from exc
             except Exception as exc:
                 raise DesignError("design_provider_failure", "Design provider failed") from exc
             status = {DecisionType.TRAINING: "ready_for_alignment_review",
