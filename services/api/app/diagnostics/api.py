@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.design.service import UnavailableDesignProvider
+from app.design.service import design_provider_kind
 
 from .engine import DiagnosticError, DiagnosticService, ProviderOutputError, provider_kind
 from .models import HumanRevision
@@ -54,16 +54,9 @@ def mode(request: Request):
     state = request.app.state
     diagnostics: DiagnosticService = state.diagnostics
     designs = state.designs
-    if designs.controlled_fixture:
-        design_provider = "controlled_fixture"
-    elif isinstance(designs.intervention, UnavailableDesignProvider) and isinstance(
-            designs.training, UnavailableDesignProvider):
-        design_provider = "unavailable"
-    else:
-        design_provider = "provider"
     return {"mode": state.demo_mode,
             "diagnostic_provider": provider_kind(diagnostics.reasoner),
-            "design_provider": design_provider,
+            "design_provider": design_provider_kind(designs.intervention, designs.training),
             "evaluation_count": len(diagnostics.evaluations),
             "signal_count": len(diagnostics.signals)}
 

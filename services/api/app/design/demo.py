@@ -10,6 +10,8 @@ class DemoDesignFixture:
     No inference and no cause-domain rule: the branch is a demo configuration choice.
     """
 
+    controlled_fixture = True  # Reported by /diagnostics/mode from the object; see `design_provider_kind`.
+
     def __init__(self, training_signal_id: str, alternative: str = "investigate"):
         self.training_signal_id = training_signal_id
         self.alternative = alternative

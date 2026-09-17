@@ -1365,6 +1365,15 @@ export default function ReviewWorkspace() {
                         this data.
                       </p>
                     </>
+                  ) : selectedEvidence ? (
+                    <>
+                      <h3>Citation not in this signal’s evidence</h3>
+                      <p>
+                        The cited item {shortId(selectedEvidence.item_id)} is
+                        not one of this signal’s source rows. Refresh before
+                        relying on it.
+                      </p>
+                    </>
                   ) : (
                     <>
                       <h3>Select evidence to inspect</h3>
