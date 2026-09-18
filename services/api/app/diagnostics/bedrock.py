@@ -31,11 +31,15 @@ supplied evidence references. Distinguish supporting from conflicting evidence, 
 missing evidence. Return undetermined when the evidence cannot distinguish causes. Do not
 automatically recommend training. A human validates the diagnosis afterward.
 Cite at least one supplied reference, including SIGNAL-001 when only aggregate evidence
-supports the observation. diagnostic_text, when present, is locally minimized evaluator
-feedback in which [redacted] marks a suppressed staff name; treat it as an unnamed person.
-Its absence does not mean no local feedback existed. Use text_coverage to judge
-qualitative coverage; blocked or missing text does not support a cause. Do not invent hidden
-feedback. High failure rate alone does not establish a training need."""
+supports the observation.
+Qualitative evaluator feedback may have been withheld from you by local policy.
+text_coverage states how many evidence items have local feedback and how many of those were
+withheld or blocked; absence of diagnostic_text never means no local feedback existed. Never
+invent, guess, or paraphrase withheld feedback. When the qualitative evidence you were given
+is insufficient to distinguish causes, lower provider_reported_confidence or return
+undetermined and name the missing evidence. diagnostic_text, when present, is locally
+minimized evaluator feedback in which [redacted] marks a suppressed staff name; treat it as
+an unnamed person. High failure rate alone does not establish a training need."""
 
 # Meaning of each response field. Types, enums, and bounds are NOT written here: they are
 # rendered from the BedrockResponse JSON schema so the prompt cannot drift from the validator.
@@ -350,9 +354,13 @@ class BedrockReasoner:
             identities = {name for e in evaluations for name in (e.agent_name, e.qa_name, e.team_leader)}
             if local.provider_view(identities) != evidence_bundle:
                 raise ProviderOutputError("provider_privacy_blocked", "Remote diagnosis privacy policy blocked")
+            # Structured only in this milestone: no keyword is passed here, so the module
+            # default decides and nothing outside this code path can turn real text on.
             prepared = prepare_real_evidence(local, evaluations)
             payload, lookup = prepared.payload, prepared.lookup
             validate_real_wire_payload(payload)
+            if any("diagnostic_text" in item for item in payload["evidence_items"]):
+                raise ProviderOutputError("provider_privacy_blocked", "Remote diagnosis privacy policy blocked")
         else:
             if not self._permits(evidence_bundle):
                 raise ProviderOutputError("provider_privacy_blocked",

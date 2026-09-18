@@ -1,6 +1,6 @@
 # M5.6 local ResultsCX demo path
 
-AWS-2 extends this demo with an optional, explicitly minimized Bedrock diagnostic path when enabled. See [AWS-2 real evidence boundary](aws2-real-evidence-boundary.md). The original no-provider mode remains the default.
+AWS-2 extends this demo with an optional structured-only Bedrock diagnostic path when enabled; evaluator comments stay local. See [AWS-2 real evidence boundary](aws2-real-evidence-boundary.md). The original no-provider mode remains the default.
 
 Place these three confidential files directly in ignored `data/raw/`, keeping the filenames exactly as shown:
 

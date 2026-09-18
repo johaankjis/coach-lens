@@ -47,7 +47,8 @@ def test_local_preparation_preserves_raw_and_maps_exact_lineage():
     signal = service.list_signals()[0]
     raw = service.evidence(signal.signal_id)
     before = [item.model_dump() for item in raw.items]
-    prepared_bundle = prepare_real_evidence(raw, rows)
+    # Exercises the deferred text machinery explicitly; the reasoner never passes this.
+    prepared_bundle = prepare_real_evidence(raw, rows, transmit_minimized_text=True)
     wire = prepared_bundle.payload
     serialized = json.dumps(wire)
     assert set(wire) == {"signal", "evidence_items", "text_coverage"}

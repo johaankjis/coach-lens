@@ -100,7 +100,8 @@ def test_coverage_counts_are_exact_and_prompt_is_not_inflated():
                                                                        excel_row=n + 1))])
             for n, comment in enumerate(comments, 1)]
     signal = detect_signals(rows)[0]
-    prepared = prepare_real_evidence(build_bundle(signal, rows), rows)
+    # Deferred machinery, exercised explicitly; the reasoner never passes this argument.
+    prepared = prepare_real_evidence(build_bundle(signal, rows), rows, transmit_minimized_text=True)
     wire = prepared.payload
     validate_real_wire_payload(wire)
     assert wire["text_coverage"] == {"total_evidence_items": 14, "evidence_items_with_feedback": 12,

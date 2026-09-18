@@ -24,6 +24,18 @@ class TextDecision(StrEnum):
     ALLOW_MINIMIZED = "allow_minimized"
     BLOCK = "block"
     NO_TEXT = "no_text"
+    # Local text existed and the minimizer would have admitted it, but real evaluator text
+    # is not transmitted in the current milestone. Distinct from BLOCK so local accounting
+    # does not misreport why the text stayed home.
+    WITHHELD = "withheld"
+
+
+# Deliberate default for the first merged real-data path: structured ResultsCX evidence
+# crosses; minimized evaluator comments do not. There is no setting, environment variable,
+# or request field behind this. Activating real text is a separate reviewed code change that
+# passes `transmit_minimized_text=True` from the reasoner, after the policy has been
+# evaluated locally against the actual dataset.
+TRANSMIT_REAL_MINIMIZED_TEXT = False
 
 
 @dataclass(frozen=True)
@@ -147,8 +159,14 @@ def population_digest(evaluations: list[Evaluation]) -> str:
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def prepare_real_evidence(bundle: EvidenceBundle, evaluations: list[Evaluation]) -> ProviderSafeEvidenceBundle:
-    """Prepare one M3 bundle from the trusted local population; never serialize raw models."""
+def prepare_real_evidence(bundle: EvidenceBundle, evaluations: list[Evaluation], *,
+                          transmit_minimized_text: bool = TRANSMIT_REAL_MINIMIZED_TEXT) -> ProviderSafeEvidenceBundle:
+    """Prepare one M3 bundle from the trusted local population; never serialize raw models.
+
+    Every comment still receives a local minimizer decision so coverage is exact. Text is
+    copied to the wire only for ALLOW_MINIMIZED and only when `transmit_minimized_text` is
+    true; otherwise the decision is recorded as WITHHELD and counted with blocked text.
+    """
     from .bedrock import provider_safe_payload
 
     identities = {value for evaluation in evaluations for value in
@@ -159,27 +177,32 @@ def prepare_real_evidence(bundle: EvidenceBundle, evaluations: list[Evaluation])
     payload["signal"]["criterion"] = criterion
     local_references = {}
     decisions = {}
-    allowed = blocked = no_text = 0
+    allowed = not_transmitted = no_text = 0
     for number, item in enumerate(bundle.items, 1):
         ref = f"EVID-{number:03d}"
         wire = payload["evidence_items"][number - 1]
         wire["criterion"] = criterion
         result = minimize_text(item.evaluator_feedback, identities)
-        decisions[ref] = result.decision
+        decision = result.decision
+        if decision == TextDecision.ALLOW_MINIMIZED and not transmit_minimized_text:
+            decision = TextDecision.WITHHELD
+        decisions[ref] = decision
         local_references[ref] = LocalEvidenceReference(item.item_id, item.evaluation_id,
                                                        item.source_lineage.model_copy(deep=True))
-        if result.decision == TextDecision.ALLOW_MINIMIZED:
+        if decision == TextDecision.ALLOW_MINIMIZED:
             wire["diagnostic_text"] = {"kind": "minimized_evaluator_feedback", "text": result.text}
             allowed += 1
-        elif result.decision == TextDecision.BLOCK:
-            blocked += 1
+        elif decision in (TextDecision.BLOCK, TextDecision.WITHHELD):
+            not_transmitted += 1
         else:
             no_text += 1
+    # `text_items_blocked` on the wire means "local text existed and was not transmitted",
+    # whether the minimizer refused it or the milestone default withheld it.
     coverage = {"total_evidence_items": len(bundle.items),
                 "evidence_items_with_feedback": bundle.signal.feedback_count,
-                "minimized_text_items_allowed": allowed, "text_items_blocked": blocked,
+                "minimized_text_items_allowed": allowed, "text_items_blocked": not_transmitted,
                 "text_items_with_no_text": no_text}
-    if allowed + blocked + no_text != len(bundle.items):
+    if allowed + not_transmitted + no_text != len(bundle.items):
         raise ProviderOutputError("invalid_provider_input", "Diagnostic text coverage is inconsistent")
     payload["text_coverage"] = coverage
     return ProviderSafeEvidenceBundle(payload, lookup, local_references, decisions)

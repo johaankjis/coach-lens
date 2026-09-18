@@ -27,7 +27,7 @@ def main() -> int:
     import uvicorn
 
     install_results_cx_demo(app, evaluations)
-    diagnostic_state = ("Bedrock diagnostic provider with AWS-2 minimized evidence"
+    diagnostic_state = ("Bedrock diagnostic provider with AWS-2 structured evidence only; evaluator comments stay local"
                         if get_settings().bedrock_enabled else "diagnostic provider unavailable")
     print(f"Mode: REAL RESULTS CX (local data; {diagnostic_state}; design providers unavailable)", flush=True)
     print(f"Loaded {len(evaluations)} evaluations, "
