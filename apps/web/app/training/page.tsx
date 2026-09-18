@@ -1,17 +1,18 @@
 import type { Metadata } from "next";
-import SectionPlaceholder from "../components/section-placeholder";
+import TrainingWorkspace from "./training-workspace";
 
-export const metadata: Metadata = { title: "Training | CoachLens AI" };
+export const metadata: Metadata = {
+  title: "Training | CoachLens AI",
+  description: "The AWS-5 training package generated for a solution-validated intervention.",
+};
 
-export default function TrainingPage() {
-  return (
-    <SectionPlaceholder
-      href="/training"
-      summary="Training will show validated interventions and the training designs built from them, each traced back to the human-validated diagnosis and its QA evidence. Today an M5 proposal is visible only inside Agent Insights after a diagnosis is approved."
-      dependsOn={[
-        "AWS-4 intervention validation, so a training decision is validated rather than proposed",
-        "AWS-5 training designer status, so outlines, activities, and practice specs have a delivery state",
-      ]}
-    />
-  );
+/** Home and the Training stage link here with `?signal=<id>`; without it the backend's first signal is shown. */
+export default async function TrainingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const params = await searchParams;
+  const requested = params.signal;
+  return <TrainingWorkspace signalId={typeof requested === "string" && requested ? requested : null} />;
 }

@@ -68,9 +68,9 @@ Profiling prints aggregates only. Normalization writes confidential row-level JS
 
 See [product spec](docs/product-spec.md) and [architecture](docs/architecture.md) for the intended later system.
 
-## UI-1 Home / Command Center
+## Home / Command Center
 
-The frontend opens on a Home command center (`/`) that summarizes observed QA criteria, the first signal in the backend's failure-count order, its AWS-3 evidence review and human-validation status, and typed pending slots for later intervention, training, alignment, and outcome milestones. This ordering does not establish priority or severity; the Priority issues metric remains pending. **Continue in Agent Insights** routes into the detailed review workspace at `/agent-insights?signal=<id>`. Training, Role-Play, KPI Tracker, Reports, and Resources are planned pages with no controls or figures. Home computes no QA statistics; see [the UI-1 guide](docs/ui1-command-center.md) for the read-model and wiring points.
+The frontend opens on a Home command center (`/`) that summarizes observed QA criteria, the first signal in the backend's failure-count order, its AWS-3 evidence review, human-validation status, AWS-4 intervention and solution-validation state, AWS-5 training package state, and a pending alignment slot for AWS-6. The pipeline strip reads Observed → Diagnosed → Evidence reviewed → Human validated → Intervention proposed → Solution validated → Training generated → Alignment pending from real backend state; a process correction shows training as not applicable, and a questioned solution shows training as withheld. One context-sensitive next step routes to Agent Insights (`/agent-insights?signal=<id>`) or, once a package exists, to Training. Signal ordering does not establish priority or severity; Priority issues, Agents monitored, and Overall QA remain pending. **Training** and **Role-Play** display the generated AWS-5 package and its facilitator practice script for one signal; **KPI Tracker** states that outcome measurement is pending over the M2 baseline; Reports and Resources are planned pages. Home computes no QA statistics; see [the command center guide](docs/ui1-command-center.md) for the read-model and the AWS-6 wiring point.
 
 ## M5 design flow and M4 review workspace
 

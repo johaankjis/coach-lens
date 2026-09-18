@@ -10,20 +10,21 @@ import {
   type EvidenceReviewStatus,
   type HomeReadModel,
   type HumanValidationStatus,
+  type InterventionStage,
   type PriorityInsight,
+  type StatusTone,
   type SummaryMetric,
+  type TrainingStage,
 } from "../lib/home/read-model";
 
 /* ---------- Status vocabulary ----------------------------------------------------------
  * Tone classes are deliberately separate from meaning: semantic "questioned" is caution
  * (amber), never the red reserved for a human rejection. */
-type Tone = "neutral" | "validated" | "caution" | "rejected" | "proposed" | "pending";
-
-function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+export function Pill({ tone, children }: { tone: StatusTone; children: React.ReactNode }) {
   return <span className={`pill ${tone}`}>{children}</span>;
 }
 
-function evidenceReviewPill(status: EvidenceReviewStatus): { tone: Tone; text: string } {
+function evidenceReviewPill(status: EvidenceReviewStatus): { tone: StatusTone; text: string } {
   switch (status.state) {
     case "not_applicable":
       return { tone: "neutral", text: "No diagnosis yet" };
@@ -36,7 +37,7 @@ function evidenceReviewPill(status: EvidenceReviewStatus): { tone: Tone; text: s
   }
 }
 
-function humanValidationPill(status: HumanValidationStatus): { tone: Tone; text: string } {
+function humanValidationPill(status: HumanValidationStatus): { tone: StatusTone; text: string } {
   const by = status.reviewer ? ` by ${status.reviewer}` : "";
   switch (status.state) {
     case "none":
@@ -54,18 +55,60 @@ function humanValidationPill(status: HumanValidationStatus): { tone: Tone; text:
   }
 }
 
-function downstreamPill(stage: DownstreamStage): { tone: Tone; text: string } {
+export function interventionPill(stage: InterventionStage): { tone: StatusTone; text: string } {
+  switch (stage.state) {
+    case "blocked":
+      return { tone: "neutral", text: "Requires human-validated diagnosis" };
+    case "not_started":
+      return { tone: "neutral", text: "Not proposed" };
+    case "proposed":
+      return { tone: "proposed", text: `${stage.typeLabel} proposed · solution not validated` };
+    case "solution_validated":
+      return { tone: "validated", text: `${stage.typeLabel} · solution validated` };
+    case "solution_questioned":
+      return { tone: "caution", text: `${stage.typeLabel} · solution questioned` };
+  }
+}
+
+export function trainingPill(stage: TrainingStage): { tone: StatusTone; text: string } {
+  switch (stage.state) {
+    case "blocked":
+      return { tone: "neutral", text: "Blocked upstream" };
+    case "awaiting_solution":
+      return { tone: "neutral", text: "Awaiting solution validation" };
+    case "withheld":
+      return { tone: "caution", text: "Training withheld" };
+    case "not_applicable":
+      return { tone: "not_applicable", text: "Training not applicable" };
+    case "permitted":
+      return { tone: "pending", text: "Permitted · not generated" };
+    case "generated":
+      return { tone: "validated", text: "Training generated · not deployed" };
+  }
+}
+
+function downstreamPill(stage: DownstreamStage): { tone: StatusTone; text: string } {
   switch (stage.status) {
     case "pending_backend":
-      return { tone: "pending", text: "Pending backend" };
+      return { tone: "pending", text: "Measurement pending" };
     case "blocked":
       return { tone: "neutral", text: "Blocked upstream" };
     case "not_started":
       return { tone: "neutral", text: "Not started" };
     case "proposed":
       return { tone: "proposed", text: "Proposed · not validated" };
+    case "validated":
+      return { tone: "validated", text: "Solution validated" };
+    case "questioned":
+      return { tone: "caution", text: "Solution questioned" };
+    case "withheld":
+      return { tone: "caution", text: "Withheld" };
+    case "generated":
+      return { tone: "validated", text: "Generated · not deployed" };
     case "not_applicable":
-      return { tone: "neutral", text: "Not applicable" };
+      return { tone: "not_applicable", text: "Not applicable" };
+    case "pending":
+      return { tone: "pending", text: "Pending · not yet reviewed" };
   }
 }
 
@@ -78,8 +121,8 @@ function ProvenanceBadge({ model }: { model: HomeReadModel }) {
       <strong>{provenance.label}</strong>
       <span>{provenance.detail}</span>
       <small>
-        Diagnostic provider: {provenance.diagnosticProvider} · Design provider:{" "}
-        {provenance.designProvider}
+        Diagnostic provider: {provenance.diagnosticProvider} · Intervention provider:{" "}
+        {provenance.interventionProvider} · Design provider: {provenance.designProvider}
       </small>
     </div>
   );
@@ -173,29 +216,110 @@ function PerformanceGaps({ model }: { model: HomeReadModel }) {
   );
 }
 
-function Pipeline({ insight, downstream }: { insight: PriorityInsight; downstream: DownstreamStage[] }) {
-  const evidence = evidenceReviewPill(insight.evidenceReview);
-  const human = humanValidationPill(insight.humanValidation);
-  const steps: { name: string; tone: Tone; text: string }[] = [
-    { name: "Observed", tone: "validated", text: "Deterministic" },
-    {
-      name: "Working diagnosis",
-      tone: insight.diagnosis.state === "proposed" ? "proposed" : "neutral",
-      text: insight.diagnosis.state === "proposed" ? "Proposed" : "Not requested",
-    },
-    { name: "Evidence review", ...evidence },
-    { name: "Human validation", ...human },
-    ...downstream.map((stage) => ({ name: stage.label, ...downstreamPill(stage) })),
-  ];
+export function Pipeline({ insight }: { insight: PriorityInsight }) {
   return (
     <ol className="pipeline" aria-label="Progress of this insight through the workflow">
-      {steps.map((step) => (
-        <li key={step.name} className={`pipeline-step ${step.tone}`}>
+      {insight.pipeline.map((step) => (
+        <li key={step.id} className={`pipeline-step ${step.tone}`}>
           <span className="pipeline-name">{step.name}</span>
           <span className="pipeline-state">{step.text}</span>
         </li>
       ))}
     </ol>
+  );
+}
+
+function InterventionFields({ insight }: { insight: PriorityInsight }) {
+  const { intervention, training, alignment } = insight;
+  const interventionTone = interventionPill(intervention);
+  const trainingTone = trainingPill(training);
+  return (
+    <>
+      <div className="insight-field">
+        <span className="field-label">Intervention</span>
+        <Pill tone={interventionTone.tone}>{interventionTone.text}</Pill>
+        {intervention.state === "proposed" ||
+        intervention.state === "solution_validated" ||
+        intervention.state === "solution_questioned" ? (
+          <>
+            <strong>{intervention.recommendation}</strong>
+            <small>
+              Target change: {intervention.targetChange}{" "}
+              {intervention.origin === "fixture" ? "· Fixed fixture proposal." : "· AI proposal."} Not a
+              human decision.
+            </small>
+          </>
+        ) : (
+          <small>
+            {intervention.state === "blocked"
+              ? "The AWS-4 reasoner runs only after a human validates the diagnosis."
+              : "Ask the AWS-4 reasoner in Agent Insights. Training is one option, not the default."}
+          </small>
+        )}
+      </div>
+
+      <div className="insight-field">
+        <span className="field-label">Solution validation</span>
+        {intervention.state === "solution_validated" || intervention.state === "solution_questioned" ? (
+          <>
+            <Pill tone={intervention.state === "solution_validated" ? "validated" : "caution"}>
+              {intervention.state === "solution_validated" ? "Solution validated" : "Solution questioned"} ·{" "}
+              {intervention.solution?.alignment}
+            </Pill>
+            <small>{intervention.solution?.assessment}</small>
+            <small>
+              {intervention.solution?.origin === "fixture" ? "Fixed fixture review" : "Independent AI review"} of the
+              proposal against the validated diagnosis. Not a human approval, and not training alignment.
+            </small>
+          </>
+        ) : (
+          <>
+            <Pill tone="neutral">
+              {intervention.state === "proposed" ? "Awaiting validation" : "Not applicable yet"}
+            </Pill>
+            <small>Runs once an intervention is proposed. Human approval of the diagnosis is not solution validation.</small>
+          </>
+        )}
+      </div>
+
+      <div className="insight-field">
+        <span className="field-label">Training package</span>
+        <Pill tone={trainingTone.tone}>{trainingTone.text}</Pill>
+        {training.state === "generated" ? (
+          <>
+            <strong>{training.targetBehaviors[0]}</strong>
+            <small>
+              {training.outlineSectionCount} outline section{training.outlineSectionCount === 1 ? "" : "s"} ·{" "}
+              {training.activityCount} activit{training.activityCount === 1 ? "y" : "ies"} ·{" "}
+              {training.knowledgeCheckCount} knowledge check{training.knowledgeCheckCount === 1 ? "" : "s"} ·{" "}
+              {training.practiceScenarioCount} practice scenario{training.practiceScenarioCount === 1 ? "" : "s"} ·{" "}
+              {training.plannedMinutes} min planned
+              {training.missingOperationalDetailCount > 0
+                ? ` · ${training.missingOperationalDetailCount} operational detail${training.missingOperationalDetailCount === 1 ? "" : "s"} still needed`
+                : ""}
+            </small>
+            <small>
+              <Link href={training.trainingHref}>Open training package</Link> ·{" "}
+              <Link href={training.rolePlayHref}>Open role-play script</Link>
+            </small>
+          </>
+        ) : (
+          <small>{training.reason}</small>
+        )}
+      </div>
+
+      <div className="insight-field">
+        <span className="field-label">Alignment review</span>
+        <Pill tone={alignment.state === "pending" ? "pending" : alignment.state === "not_applicable" ? "not_applicable" : "neutral"}>
+          {alignment.state === "pending"
+            ? "Pending · not yet reviewed"
+            : alignment.state === "not_applicable"
+              ? "Not applicable"
+              : "Blocked upstream"}
+        </Pill>
+        <small>{alignment.reason}</small>
+      </div>
+    </>
   );
 }
 
@@ -233,7 +357,7 @@ function PriorityInsightCard({ model }: { model: HomeReadModel }) {
         </div>
       </div>
 
-      <Pipeline insight={insight} downstream={model.downstream} />
+      <Pipeline insight={insight} />
 
       <div className="insight-grid">
         <div className="insight-field">
@@ -319,10 +443,12 @@ function PriorityInsightCard({ model }: { model: HomeReadModel }) {
             {humanValidation.state === "rejected" && humanValidation.rationale
               ? humanValidation.rationale
               : humanValidation.state === "approved" || humanValidation.state === "revised_approved"
-                ? "Approval records a human decision, not objective causal truth."
+                ? "Approval records a human decision on the diagnosis, not on any intervention."
                 : "A human reviewer approves, revises, or rejects in Agent Insights."}
           </small>
         </div>
+
+        <InterventionFields insight={insight} />
       </div>
 
       {diagnosis.state === "proposed" && (
@@ -421,6 +547,11 @@ function Downstream({ model }: { model: HomeReadModel }) {
               <h3>{stage.label}</h3>
               <Pill tone={pill.tone}>{pill.text}</Pill>
               <p>{stage.detail}</p>
+              {stage.href && stage.hrefLabel && (
+                <Link className="text-link" href={stage.href}>
+                  {stage.hrefLabel} ↗
+                </Link>
+              )}
               <small>Source: {stage.source}</small>
             </li>
           );
@@ -447,8 +578,8 @@ export function CommandCenterView({
           <span className="eyebrow">Command center</span>
           <h1 id="home-title">What needs attention across the team?</h1>
           <p>
-            Observed QA criteria, the working diagnosis under review, and where to go next. Home
-            summarizes; Agent Insights explains.
+            Observed QA criteria, the working diagnosis under review, the validated intervention,
+            and where to go next. Home summarizes; Agent Insights explains.
           </p>
         </div>
         <div className="home-heading-side">

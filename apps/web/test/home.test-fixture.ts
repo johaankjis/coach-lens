@@ -1,5 +1,7 @@
+import type { DesignResult } from "../lib/designs";
 import type { EvidenceValidation, RecordState, Signal } from "../lib/diagnostics";
-import type { HomeSources, RuntimeMode } from "../lib/home/read-model";
+import type { HomeSources, InsightSources, RuntimeMode } from "../lib/home/read-model";
+import { designFixture } from "./design-workspace.test-fixture";
 
 export const topSignal: Signal = {
   signal_id: "sig_top",
@@ -126,6 +128,8 @@ export const demoMode: RuntimeMode = {
   diagnostic_provider: "controlled_fixture",
   remote_diagnosis: "local_fixture",
   design_provider: "controlled_fixture",
+  intervention_provider: "controlled_fixture",
+  solution_validator: "controlled_fixture",
   evaluation_count: 20,
   signal_count: 3,
 };
@@ -134,15 +138,66 @@ export const realMode: RuntimeMode = {
   diagnostic_provider: "unavailable",
   remote_diagnosis: "unavailable",
   design_provider: "unavailable",
+  intervention_provider: "unavailable",
+  solution_validator: "unavailable",
   evaluation_count: 20,
   signal_count: 3,
 };
+
+/**
+ * A provider-backed AWS-5 package for the validated diagnosis `hyp_1`: the M5 fixture plus the
+ * design basis, a scripted turn with facilitator cue, a knowledge check, and a missing detail.
+ */
+export function providerPackage(): DesignResult {
+  const base = designFixture("training");
+  const d = base.training_design!;
+  const run = base.run_id;
+  return {
+    ...base,
+    generation_mode: "provider",
+    training_design: {
+      ...d,
+      objectives: [{ ...d.objectives[0], standard: "both elements audible before the close" }],
+      decision_checks: [{
+        check_id: `${run}/C1`, objective_ids: [`${run}/O1`], situation: "The member asks what happens next.",
+        question: "What should the representative do before closing?",
+        options: [
+          { option_id: `${run}/C1/A`, response: "State the next step and confirm understanding", feedback: "Correct: both elements close the gap.", correct: true },
+          { option_id: `${run}/C1/B`, response: "Thank the member and close", feedback: "The next step is missing.", correct: false },
+          { option_id: `${run}/C1/C`, response: "Transfer the call", feedback: "Not warranted.", correct: false },
+          { option_id: `${run}/C1/D`, response: "Repeat the account number", feedback: "Does not address clarity.", correct: false },
+        ],
+      }],
+      practice_scenarios: [{
+        ...d.practice_scenarios[0],
+        scenario_setup: "Facilitator plays the member with the request status visible.",
+        escalation_expectation: null,
+        beats: [
+          { ...d.practice_scenarios[0].beats[0], expected_learner_behavior: "Name the specific next action.", facilitator_cue: "Listen for a confirming question.", behavior_ids: [`${run}/B1`] },
+          { beat_id: `${run}/BEAT2`, trigger: "Learner names the action", likely_response: "When will that happen?", success_branch: "Agrees and thanks the learner", challenge_branch: "Asks again", expected_learner_behavior: "State timing as [PLACEHOLDER:M1].", facilitator_cue: "Watch for invented timing.", behavior_ids: [`${run}/B1`] },
+        ],
+      }],
+      design_basis: {
+        gap: { diagnosis_id: "hyp_1", signal_id: topSignal.signal_id, observed_behavior: "Missed clarity", cause_domain: "skill_gap", performance_dimension: "capability", human_revised: false },
+        intervention: { run_id: run, decision_type: "training", intervention_type: "practice_simulation", intervention_id: "int_1", solution_validation_id: "sol_1", solution_alignment: "aligned", training_design_gate: "permitted", training_focus: "skill", validation_source: "aws4_solution_validator", summary: "Practice the resolution summary.", target_change: "State the next step and confirm member understanding before closing." },
+        guidance_version: "resultscx-design-guidance/1",
+        supplied_operational_context: [],
+      },
+      missing_operational_details: [{ detail_id: `${run}/M1`, placeholder: "[PLACEHOLDER:M1]", description: "Expected follow-up timing was not supplied.", needed_for: "Practice turn BEAT2" }],
+      provider_metadata: { provider: "Amazon Bedrock", model: "global.anthropic.claude-sonnet-4-6" },
+    },
+  };
+}
+
+export function insight(overrides: Partial<InsightSources> = {}): InsightSources {
+  return { signal: topSignal, record: awaiting, validation: null, intervention: null, design: null, ...overrides };
+}
 
 export function sources(overrides: Partial<HomeSources> = {}): HomeSources {
   return {
     mode: realMode,
     signals: [topSignal, secondSignal, cleanSignal],
-    priority: { signal: topSignal, record: awaiting, validation: null, design: null },
+    priority: insight(),
     ...overrides,
   };
 }

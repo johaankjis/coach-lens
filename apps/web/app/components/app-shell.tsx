@@ -32,7 +32,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </Link>
         <div className="topbar-right">
           <span className="workspace-label">RESULTSCX · AI OPERATIONS WORKSPACE</span>
-          <span className="milestone">UI-1 · COMMAND CENTER</span>
+          <span className="milestone">COMMAND CENTER · AWS-1 → AWS-5</span>
         </div>
       </header>
       <div className="shell-body">
@@ -58,8 +58,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             })}
           </ul>
           <div className="sidebar-foot">
-            Home summarizes. Agent Insights explains. Later sections open as their backend lanes
-            merge.
+            Home summarizes. Agent Insights explains. Training and Role-Play display what was
+            generated. Outcome measurement is pending.
           </div>
         </nav>
         <div id="main-content" className="shell-content" tabIndex={-1}>

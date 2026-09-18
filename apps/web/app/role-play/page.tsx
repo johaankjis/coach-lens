@@ -1,17 +1,18 @@
 import type { Metadata } from "next";
-import SectionPlaceholder from "../components/section-placeholder";
+import PracticeWorkspace from "./practice-workspace";
 
-export const metadata: Metadata = { title: "Role-Play | CoachLens AI" };
+export const metadata: Metadata = {
+  title: "Role-Play | CoachLens AI",
+  description: "Scripted hands-on practice generated inside the AWS-5 training package.",
+};
 
-export default function RolePlayPage() {
-  return (
-    <SectionPlaceholder
-      href="/role-play"
-      summary="Role-Play will let agents practice the validated target behaviors against the practice scenarios and personas a training design specifies. No simulation runs in this build."
-      dependsOn={[
-        "AWS-5 practice scenarios with a delivery state",
-        "A simulation runtime and a rubric scoring boundary that keeps human judgement in the loop",
-      ]}
-    />
-  );
+/** Home and the Training page link here with `?signal=<id>`; without it the backend's first signal is shown. */
+export default async function RolePlayPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const params = await searchParams;
+  const requested = params.signal;
+  return <PracticeWorkspace signalId={typeof requested === "string" && requested ? requested : null} />;
 }

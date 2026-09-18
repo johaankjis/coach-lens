@@ -163,9 +163,12 @@ function Trace({ result }: { result: DesignResult }) {
 export default function DesignWorkspace({
   result,
   signalLabel,
+  hidePractice = false,
 }: {
   result: DesignResult;
   signalLabel?: string;
+  /** The Training page shows practice on the Role-Play page instead; Agent Insights keeps it inline. */
+  hidePractice?: boolean;
 }) {
   const decision = result.intervention;
   const d = result.training_design;
@@ -408,7 +411,7 @@ export default function DesignWorkspace({
               ))}
             </section>
           )}
-          <section className="design-section">
+          {!hidePractice && <section className="design-section">
             <span className="eyebrow">Hands-on practice</span>
             <h3>The practice CoachLens proposed</h3>
             {d.practice_scenarios.map((s) => (
@@ -527,7 +530,7 @@ export default function DesignWorkspace({
                 </div>
               </article>
             ))}
-          </section>
+          </section>}
         </>
       )}
       <section className="design-section next-actions">

@@ -1,9 +1,10 @@
 /**
  * Collects the backend payloads the Home read-model is built from.
  *
- * Wiring points for later milestones live here: when AWS-4 / AWS-5 / AWS-6 expose read routes,
- * fetch them in `loadHomeSources` and pass them through `HomeSources`; the builder in
- * `read-model.ts` then replaces the corresponding pending slot.
+ * Every route used here is a read route that already exists: M3 signals and records, the AWS-3
+ * stored semantic review, the AWS-4 intervention record, and the AWS-5 / M5 design result. The
+ * AWS-6 alignment lane has no read route yet; when it merges, fetch it here and pass it through
+ * `InsightSources`, and the builder in `read-model.ts` replaces the pending alignment slot.
  */
 import { isDesignResult, type DesignResult } from "../designs";
 import {
@@ -17,7 +18,15 @@ import {
   type RecordState,
   type Signal,
 } from "../diagnostics";
-import { buildHomeReadModel, isRuntimeMode, type HomeReadModel, type HomeSources, type RuntimeMode } from "./read-model";
+import { isInterventionRecord, type InterventionRecord } from "../interventions";
+import {
+  buildHomeReadModel,
+  isRuntimeMode,
+  type HomeReadModel,
+  type HomeSources,
+  type InsightSources,
+  type RuntimeMode,
+} from "./read-model";
 
 const optional = async <T>(request: Promise<T>): Promise<T | null> => {
   try {
@@ -38,7 +47,7 @@ async function loadMode(): Promise<RuntimeMode | null> {
   }
 }
 
-async function loadPriority(signal: Signal): Promise<NonNullable<HomeSources["priority"]>> {
+export async function loadInsight(signal: Signal): Promise<InsightSources> {
   const records: RecordState[] = await api(
     `/signals/${encodeURIComponent(signal.signal_id)}/hypotheses`,
     isRecordList,
@@ -46,6 +55,7 @@ async function loadPriority(signal: Signal): Promise<NonNullable<HomeSources["pr
   // The M3 list is newest first; Home summarizes the latest review record only.
   const record = records[0] ?? null;
   let validation: EvidenceValidation | null = null;
+  let intervention: InterventionRecord | null = null;
   let design: DesignResult | null = null;
   if (record) {
     const id = record.provider_hypothesis.hypothesis_id;
@@ -54,21 +64,36 @@ async function loadPriority(signal: Signal): Promise<NonNullable<HomeSources["pr
     );
     if (validation && validation.hypothesis_id !== id) validation = null;
     if (validated(record)) {
-      design = await optional(
-        api(`/diagnoses/${encodeURIComponent(id)}`, isDesignResult, undefined, "designs"),
-      );
+      // Both stores are keyed by the validated diagnosis; 404 means the stage has not run.
+      [intervention, design] = await Promise.all([
+        optional(api(`/diagnoses/${encodeURIComponent(id)}`, isInterventionRecord, undefined, "interventions")),
+        optional(api(`/diagnoses/${encodeURIComponent(id)}`, isDesignResult, undefined, "designs")),
+      ]);
+      if (intervention && intervention.hypothesis_id !== id) intervention = null;
       if (design && design.diagnosis_id !== id) design = null;
     }
   }
-  return { signal, record, validation, design };
+  return { signal, record, validation, intervention, design };
 }
 
-export async function loadHomeSources(): Promise<HomeSources> {
+/**
+ * Home summarizes the backend's first-ordered signal. Pages that display one signal's
+ * downstream artifacts (Training, Role-Play) pass the signal Home linked to; an unknown id
+ * falls back to the first signal and is reported through `requested.found`.
+ */
+export async function loadHomeSources(signalId: string | null = null): Promise<HomeSources> {
   const [mode, signals] = await Promise.all([loadMode(), api("/signals", isSignalList)]);
-  const priority = signals[0] ? await loadPriority(signals[0]) : null;
-  return { mode, signals, priority };
+  const requestedSignal = signalId ? (signals.find((signal) => signal.signal_id === signalId) ?? null) : null;
+  const selected = requestedSignal ?? signals[0] ?? null;
+  const priority = selected ? await loadInsight(selected) : null;
+  return {
+    mode,
+    signals,
+    priority,
+    requested: signalId ? { signalId, found: requestedSignal !== null } : null,
+  };
 }
 
-export async function loadHomeReadModel(): Promise<HomeReadModel> {
-  return buildHomeReadModel(await loadHomeSources());
+export async function loadHomeReadModel(signalId: string | null = null): Promise<HomeReadModel> {
+  return buildHomeReadModel(await loadHomeSources(signalId));
 }
