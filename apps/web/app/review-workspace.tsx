@@ -474,6 +474,17 @@ export default function ReviewWorkspace() {
     };
   }, [selectedId]);
   useEffect(() => {
+    // A stored semantic review belongs to one hypothesis; reload it when the selection changes
+    // so a reviewer never sees a stale panel or an empty one for an already-reviewed proposal.
+    if (!recordId) return;
+    const id = recordId;
+    let cancelled = false;
+    api(`${hypothesisPath(id)}/evidence-validation`, isEvidenceValidation)
+      .then((result) => { if (!cancelled && result.hypothesis_id === id) setEvidenceValidation(result); })
+      .catch((cause) => { if (!cancelled && (!(cause instanceof ApiError) || cause.status !== 404)) setError((cause as Error).message); });
+    return () => { cancelled = true; };
+  }, [recordId]);
+  useEffect(() => {
     if (!record || !validated(record)) return;
     const id = record.provider_hypothesis.hypothesis_id;
     let cancelled = false;
@@ -997,23 +1008,55 @@ export default function ReviewWorkspace() {
                         </section>
                         <section className="validation" aria-label="Semantic evidence review">
                           <div className="section-kicker">02A / SEMANTIC EVIDENCE REVIEW</div>
-                          <h2>Evidence support</h2>
+                          <h2>Does the evidence support the proposed diagnosis?</h2>
                           {currentValidation ? (
                             <>
-                              <p><strong>{label(currentValidation.validation_outcome)}</strong> · {label(currentValidation.semantic_status)}</p>
+                              <div className={`working-diagnosis semantic-verdict ${currentValidation.semantic_status === "evidence_validated" ? "" : "questioned"}`}>
+                                <strong>{label(currentValidation.validation_outcome)}</strong>
+                                <span>{currentValidation.semantic_status === "evidence_validated" ? "EVIDENCE VALIDATED" : "EVIDENCE QUESTIONED"}</span>
+                                <small>
+                                  {isDemo ? "Fixed fixture review of the original fixture proposal." : "AI review of the original AI proposal."}{" "}
+                                  Not a human decision.
+                                </small>
+                              </div>
                               <p>{currentValidation.support_assessment}</p>
-                              <p>Confirmed support: {currentValidation.supported_reference_ids.join(", ") || "None"}</p>
-                              <p>Contradicting evidence: {currentValidation.contradicting_reference_ids.join(", ") || "None"}</p>
-                              {currentValidation.unsupported_claims.length > 0 && <div><h3>Claims beyond the evidence</h3><ul>{currentValidation.unsupported_claims.map((claim, index) => <li key={index}>{claim}</li>)}</ul></div>}
-                              {currentValidation.missing_evidence.length > 0 && <div><h3>Evidence still needed</h3><ul>{currentValidation.missing_evidence.map((gap, index) => <li key={index}>{gap}</li>)}</ul></div>}
-                              <p>This review does not approve the diagnosis. A human reviewer makes the decision below.</p>
+                              <div className="evidence-pair">
+                                <EvidenceGroup
+                                  title="Evidence the validator confirms as support"
+                                  references={currentValidation.supported_evidence}
+                                  kind="supporting"
+                                  onSelect={setSelectedEvidence}
+                                />
+                                <EvidenceGroup
+                                  title="Evidence the validator finds contradicting"
+                                  references={currentValidation.contradicting_evidence}
+                                  kind="conflicting"
+                                  onSelect={setSelectedEvidence}
+                                />
+                              </div>
+                              {currentValidation.unsupported_claims.length > 0 && <div className="missing"><h4>Claims beyond the evidence</h4><ul>{currentValidation.unsupported_claims.map((claim, index) => <li key={index}>{claim}</li>)}</ul></div>}
+                              {currentValidation.missing_evidence.length > 0 && <div className="missing"><h4>Evidence still needed</h4><ul>{currentValidation.missing_evidence.map((gap, index) => <li key={index}>{gap}</li>)}</ul></div>}
+                              <div className="confidence">
+                                <div>
+                                  <span className="field-label">{isDemo ? "Fixture support confidence" : "Validator-reported support confidence"}</span>
+                                  <strong>{currentValidation.provider_reported_confidence}</strong>
+                                </div>
+                                <p>How strongly the supplied evidence supports the proposal as written. It is not a statistically calibrated probability.</p>
+                              </div>
+                              {record.human_revision ? (
+                                <p>This review assessed the original proposal only. The reviewer’s revision below has not been semantically reviewed.</p>
+                              ) : (
+                                <p>This review does not approve or reject the diagnosis. A human reviewer decides below.</p>
+                              )}
                             </>
-                          ) : (
+                          ) : record.status === "awaiting_review" ? (
                             <>
-                              <p>Review whether the supplied evidence supports the proposed diagnosis.</p>
+                              <p>Ask the evidence validator whether the same evidence population the reasoner saw, including evidence it did not cite, supports this proposal. The result informs the human decision below and never replaces it.</p>
                               <button type="button" className="button secondary" disabled={busy}
                                 onClick={() => void validateEvidence()}>Validate evidence</button>
                             </>
+                          ) : (
+                            <p>No semantic evidence review was recorded before the reviewer’s decision.</p>
                           )}
                         </section>
                         {record.human_revision && (

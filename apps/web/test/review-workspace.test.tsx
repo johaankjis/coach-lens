@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReviewWorkspace from "../app/review-workspace";
-import type { EvidenceBundle, RecordState, Signal } from "../lib/diagnostics";
+import type { EvidenceBundle, EvidenceValidation, RecordState, Signal } from "../lib/diagnostics";
 import { designFixture } from "./design-workspace.test-fixture";
 
 const signal: Signal = {
@@ -88,40 +88,109 @@ function route(
     if (path.endsWith("/review-evidence")) return reply(evidence);
     if (path.endsWith("/hypotheses")) return reply(records);
     if (path.endsWith("/hypotheses/hyp_1")) return reply(records[0]);
+    if (path.endsWith("/evidence-validation")) return storedValidation
+      ? reply(storedValidation) : reply({ detail: { code: "validation_not_found" } }, 404);
     if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
     throw new Error(`Unexpected route ${path}`);
   });
   vi.stubGlobal("fetch", mock);
   return mock;
 }
+const questionedValidation: EvidenceValidation = {
+  validation_id: "val_1", hypothesis_id: "hyp_1", signal_id: "sig_1",
+  assessed_proposal: "provider_hypothesis",
+  validation_outcome: "unsupported", semantic_status: "evidence_questioned",
+  support_assessment: "The cited failures do not establish a skill gap.",
+  supported_reference_ids: ["EVID-001"], contradicting_reference_ids: ["EVID-002"],
+  supported_evidence: [{ item_id: "ev_1", evaluation_id: "eval_1" }],
+  contradicting_evidence: [{ item_id: "ev_2", evaluation_id: "eval_2" }],
+  unsupported_claims: ["Skill gap is unproven"], missing_evidence: ["Direct observation"],
+  provider_reported_confidence: 0.2,
+};
+let storedValidation: EvidenceValidation | null = null;
 async function loaded() {
   await screen.findByText("Provider proposed a skill gap.");
 }
 beforeEach(() => {
   vi.unstubAllGlobals();
+  storedValidation = null;
 });
 
 describe("diagnostic review semantics", () => {
   it("shows a questioned evidence review separately from human approval", async () => {
     const mock = route([proposed], async (path) => {
-      if (path.endsWith("/validate-evidence")) return reply({
-        validation_id: "val_1", hypothesis_id: "hyp_1", signal_id: "sig_1",
-        validation_outcome: "unsupported", semantic_status: "evidence_questioned",
-        support_assessment: "The cited failures do not establish a skill gap.",
-        supported_reference_ids: ["EVID-001"], contradicting_reference_ids: ["EVID-002"],
-        unsupported_claims: ["Skill gap is unproven"], missing_evidence: ["Direct observation"],
-        provider_reported_confidence: 0.2,
-      });
+      if (path.endsWith("/validate-evidence")) return reply(questionedValidation);
       throw new Error(`Unexpected route ${path}`);
     });
     render(<ReviewWorkspace />);
     await loaded();
     await userEvent.click(screen.getByRole("button", { name: "Validate evidence" }));
     expect(await screen.findByText("The cited failures do not establish a skill gap.")).toBeInTheDocument();
-    expect(screen.getByText(/Evidence Questioned/)).toBeInTheDocument();
-    expect(screen.getByText("Skill gap is unproven")).toBeInTheDocument();
+    const panel = screen.getByRole("region", { name: "Semantic evidence review" });
+    expect(within(panel).getByText("Unsupported")).toBeInTheDocument();
+    expect(within(panel).getByText("EVIDENCE QUESTIONED")).toBeInTheDocument();
+    expect(within(panel).getByText("Skill gap is unproven")).toBeInTheDocument();
+    expect(within(panel).getByText("Direct observation")).toBeInTheDocument();
+    expect(within(panel).getByText("0.2")).toBeInTheDocument();
+    expect(within(panel).getByText(/does not approve or reject the diagnosis/)).toBeInTheDocument();
+    // Human controls remain, and nothing reads as human validated or rejected.
     expect(screen.getByText("This diagnosis has not been human validated.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve diagnosis" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revise" })).toBeInTheDocument();
+    expect(screen.queryByText("HUMAN VALIDATED")).not.toBeInTheDocument();
+    expect(screen.queryByText("REJECTED")).not.toBeInTheDocument();
     expect(mock).toHaveBeenCalledWith(expect.stringContaining("/validate-evidence"), expect.objectContaining({ method: "POST" }));
+  });
+
+  it("opens the validator's contradicting evidence in the inspector by local reference", async () => {
+    route([proposed], async (path) => {
+      if (path.endsWith("/validate-evidence")) return reply(questionedValidation);
+      throw new Error(`Unexpected route ${path}`);
+    });
+    render(<ReviewWorkspace />);
+    await loaded();
+    await userEvent.click(screen.getByRole("button", { name: "Validate evidence" }));
+    const panel = await screen.findByRole("region", { name: "Semantic evidence review" });
+    const contradicting = within(panel).getByRole("region", { name: "Evidence the validator finds contradicting" });
+    await userEvent.click(within(contradicting).getByRole("button", { name: /Evaluation eval_2/ }));
+    expect(screen.getByText("Yes · Pass")).toBeInTheDocument();
+    expect(screen.getByText("Clear summary")).toBeInTheDocument();
+    // Opaque wire references are never what the reviewer navigates by.
+    expect(within(panel).queryByText(/EVID-00/)).not.toBeInTheDocument();
+  });
+
+  it("loads a stored review on selection and reads it as the original proposal's review after a revision", async () => {
+    storedValidation = questionedValidation;
+    route([{
+      ...proposed,
+      status: "revised",
+      human_revision: {
+        ...proposed.provider_hypothesis,
+        cause_domain: "process_gap",
+        performance_dimension: "undetermined",
+        explanation: "Reviewer found a process issue.",
+      },
+      events: [{ action: "revise", reviewer_id: "qa-1", occurred_at: "2026-09-17T12:00:00Z", rationale: "Process evidence" }],
+    }]);
+    render(<ReviewWorkspace />);
+    await loaded();
+    const panel = await screen.findByRole("region", { name: "Semantic evidence review" });
+    expect(await within(panel).findByText("The cited failures do not establish a skill gap.")).toBeInTheDocument();
+    expect(within(panel).getByText(/assessed the original proposal only/)).toBeInTheDocument();
+    expect(within(panel).getByText(/revision below has not been semantically reviewed/)).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Validate evidence" })).not.toBeInTheDocument();
+    expect(screen.getByText("Reviewer found a process issue.")).toBeInTheDocument();
+  });
+
+  it("does not offer semantic validation after a human decision without a stored review", async () => {
+    route([{ ...proposed, status: "approved", events: [{ action: "approve", reviewer_id: "qa-1", occurred_at: "2026-09-17T12:00:00Z", rationale: null }] }]);
+    render(<ReviewWorkspace />);
+    await loaded();
+    const panel = screen.getByRole("region", { name: "Semantic evidence review" });
+    expect(await within(panel).findByText("No semantic evidence review was recorded before the reviewer’s decision.")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Validate evidence" })).not.toBeInTheDocument();
+    expect(screen.getByText("HUMAN VALIDATED")).toBeInTheDocument();
   });
 
   it("labels deterministic observations and an unvalidated proposal, without probability language", async () => {
@@ -759,6 +828,7 @@ describe("M5 orchestration in the review workspace", () => {
       if (path.endsWith("/signals")) return reply([signal]);
       if (path.endsWith("/review-evidence")) return reply(evidence);
       if (path.endsWith("/hypotheses")) return reply([approved]);
+      if (path.endsWith("/evidence-validation")) return reply({ detail: { code: "validation_not_found" } }, 404);
       if (path.includes("/api/designs/") && init?.method === "POST") return pending;
       if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
       throw new Error(path);
@@ -786,6 +856,7 @@ describe("M5 orchestration in the review workspace", () => {
       if (path.endsWith("/signals")) return reply([signal]);
       if (path.endsWith("/review-evidence")) return reply(evidence);
       if (path.endsWith("/hypotheses")) return reply([approved, other]);
+      if (path.endsWith("/evidence-validation")) return reply({ detail: { code: "validation_not_found" } }, 404);
       if (path.includes("/api/designs/") && init?.method === "POST") return pending;
       if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
       throw new Error(path);
@@ -807,6 +878,7 @@ describe("M5 orchestration in the review workspace", () => {
       if (path.endsWith("/signals")) return reply([signal]);
       if (path.endsWith("/review-evidence")) return reply(evidence);
       if (path.endsWith("/hypotheses")) return reply([approved]);
+      if (path.endsWith("/evidence-validation")) return reply({ detail: { code: "validation_not_found" } }, 404);
       if (path.includes("/api/designs/") && init?.method === "POST") return reply(response, status);
       if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
       throw new Error(path);

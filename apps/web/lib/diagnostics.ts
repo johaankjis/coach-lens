@@ -68,15 +68,19 @@ export type RecordState = {
   events: ReviewEvent[];
 };
 
+/** Semantic review of the provider's original proposal. It never expresses a human decision. */
 export type EvidenceValidation = {
   validation_id: string;
   hypothesis_id: string;
   signal_id: string;
+  assessed_proposal: "provider_hypothesis";
   validation_outcome: "supported" | "partially_supported" | "unsupported" | "insufficient_evidence";
   semantic_status: "evidence_validated" | "evidence_questioned";
   support_assessment: string;
   supported_reference_ids: string[];
   contradicting_reference_ids: string[];
+  supported_evidence: EvidenceReference[];
+  contradicting_evidence: EvidenceReference[];
   unsupported_claims: string[];
   missing_evidence: string[];
   provider_reported_confidence: number;
@@ -178,6 +182,8 @@ export function isRecordState(value: unknown): value is RecordState {
 export function isEvidenceValidation(value: unknown): value is EvidenceValidation {
   return isRecord(value) && isString(value.validation_id) &&
     isString(value.hypothesis_id) && isString(value.signal_id) &&
+    value.assessed_proposal === "provider_hypothesis" &&
+    isReferenceArray(value.supported_evidence) && isReferenceArray(value.contradicting_evidence) &&
     ["supported", "partially_supported", "unsupported", "insufficient_evidence"].includes(value.validation_outcome as string) &&
     ["evidence_validated", "evidence_questioned"].includes(value.semantic_status as string) &&
     isString(value.support_assessment) && isStringArray(value.supported_reference_ids) &&
@@ -275,6 +281,9 @@ export async function api<T>(
       reasoner_failure:
         "The diagnostic provider failed. No diagnosis was saved.",
       validator_unavailable: "No semantic evidence validator is configured.",
+      provider_privacy_blocked:
+        "The evidence privacy policy blocked this remote request. Nothing was sent or saved.",
+      validation_not_found: "No semantic evidence review has been recorded for this diagnosis.",
       validator_failure: "The evidence validator failed. No validation was saved.",
       invalid_validator_output: "The evidence validator returned invalid output. No validation was saved.",
       invalid_state_transition:

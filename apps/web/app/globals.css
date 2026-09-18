@@ -1121,6 +1121,9 @@ textarea {
 .working-diagnosis strong { font-size: 23px; line-height: 1.2; }
 .working-diagnosis span { font-size: 12px; letter-spacing: .1em; font-weight: 800; color: var(--teal); }
 .working-diagnosis small { color: var(--muted); font-size: 13px; }
+/* The semantic verdict is a model judgment, so a questioned outcome reads as caution, not rejection. */
+.semantic-verdict.questioned { border-left-color: #c2831c; background: var(--amber-soft); }
+.semantic-verdict.questioned span { color: #80551c; }
 .design-transition { font-size: 14px; line-height: 1.5; }
 .design-workspace { margin-top: 34px; padding-top: 0; border-top: 0; line-height: 1.55; overflow-wrap: anywhere; }
 .design-hero { padding: 26px; background: #eaf4f0; border: 1px solid #bed6ce; border-top: 5px solid #1a6655; }

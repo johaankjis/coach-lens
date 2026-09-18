@@ -6,6 +6,9 @@ from app.design.service import DesignService, UnavailableDesignProvider
 from app.config import get_settings
 from app.diagnostics.bedrock import BedrockReasoner
 from app.diagnostics.engine import DiagnosticService, UnavailableReasoner
+from app.diagnostics.evidence_validator import (BedrockEvidenceValidator,
+                                                 EvidenceValidationService,
+                                                 UnavailableEvidenceValidator)
 from app.diagnostics.evidence_policy import population_digest
 
 from .models import Domain, Evaluation
@@ -100,6 +103,12 @@ def install_results_cx_demo(app, evaluations: list[Evaluation]) -> None:
         reasoner = (BedrockReasoner(settings.bedrock_region, settings.bedrock_model_id)
                     if settings.bedrock_enabled else UnavailableReasoner())
     app.state.diagnostics = DiagnosticService(evaluations, reasoner)
+    # The AWS-3 validator must review the *installed* service's hypotheses, not the one
+    # `app.main` built at import time, or every real-demo validation would be "not found".
+    app.state.evidence_validations = EvidenceValidationService(
+        app.state.diagnostics,
+        BedrockEvidenceValidator(settings.bedrock_region, settings.bedrock_model_id)
+        if settings.bedrock_enabled else UnavailableEvidenceValidator())
     unavailable = UnavailableDesignProvider()
     app.state.designs = DesignService(app.state.diagnostics, unavailable, unavailable)
     app.state.demo_mode = REAL_MODE

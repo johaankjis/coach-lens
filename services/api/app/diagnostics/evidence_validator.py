@@ -16,7 +16,7 @@ from .bedrock import (PROVIDER_NAME, SIGNAL_PAYLOAD_KEYS, ITEM_PAYLOAD_KEYS,
                       TEXT_COVERAGE_KEYS, validate_real_wire_payload, _describe_type)
 from .engine import (DiagnosticError, DiagnosticService, ProviderOutputError,
                      validate_citations, provider_kind)
-from .models import FrozenModel, StrictModel, ProviderMetadata
+from .models import EvidenceReference, FrozenModel, StrictModel, ProviderMetadata
 
 
 class ValidationOutcome(StrEnum):
@@ -54,11 +54,18 @@ class EvidenceValidationRecord(FrozenModel):
     validation_id: str
     hypothesis_id: str
     signal_id: str
+    # The review always assesses the provider's original proposal. A later human revision is a
+    # different diagnosis that this record says nothing about.
+    assessed_proposal: Literal["provider_hypothesis"] = "provider_hypothesis"
     validation_outcome: ValidationOutcome
     semantic_status: Literal["evidence_validated", "evidence_questioned"]
     support_assessment: str
     supported_reference_ids: tuple[str, ...]
     contradicting_reference_ids: tuple[str, ...]
+    # The same references resolved through the saved local lookup, so the review workspace
+    # can open the exact evaluation rows the validator relied on or found contradictory.
+    supported_evidence: tuple[EvidenceReference, ...]
+    contradicting_evidence: tuple[EvidenceReference, ...]
     unsupported_claims: tuple[str, ...]
     missing_evidence: tuple[str, ...]
     provider_reported_confidence: float
@@ -66,33 +73,81 @@ class EvidenceValidationRecord(FrozenModel):
     created_at: datetime
 
 
-PROMPT = """You perform an independent evidence-based semantic review of the supplied proposed diagnosis.
-Assess that proposal only. Never create a replacement diagnosis or cause_domain. Deterministic QA
-statistics are authoritative. A recurring failure pattern proves what happened, not why.
-Frequency or correlation alone does not establish knowledge, skill, process, coaching, or
-training cause. Distinguish observation from causal inference. A diagnosis may be more
-specific than the evidence permits. Check whether cited supporting evidence logically supports
-each claim, whether cited conflicting evidence and uncited passing evidence weaken it, and
-whether important gaps are acknowledged. Missing qualitative evidence matters. Real ResultsCX
-evaluator comments may have been withheld by policy: absence of diagnostic_text does not mean
-no local comment existed. Never invent or infer withheld comments. Reward a restrained
-undetermined diagnosis when the evidence only proves an observed pattern. Use unsupported or
-insufficient_evidence when appropriate. Confidence measures evidentiary support, not rhetoric.
-Never assert human approval. Return exactly one JSON object, no markdown or surrounding prose."""
+PROMPT = """You perform an independent semantic evidence review of one proposed diagnosis.
+Answer only this question: does the supplied evidence support the proposed diagnosis? Assess
+that proposal only. Never create, suggest, or imply a replacement diagnosis, cause_domain, or
+performance_dimension, and never recommend training or coaching.
+
+Input. CoachLens supplies deterministic QA facts that are authoritative; do not recalculate,
+override, or reinterpret pass/fail results. Signal counts and rates describe only the criterion
+results that were evaluated: evaluations_containing_criterion is how many evaluations contain
+this criterion and total_loaded_evaluations is the whole loaded dataset, which may be larger.
+evidence_items is the complete evidence population the Diagnostic Reasoner saw, including
+items it did not cite. citation_roles lists which references the proposal cited as supporting
+or conflicting. text_coverage reports qualitative evaluator feedback: evidence_items_with_feedback
+and text_items_blocked count local evaluator comments that exist but were withheld from both the
+reasoner and you by policy. Absence of feedback text never means no comment existed. Never
+invent, guess, or paraphrase withheld comments, and treat any claim in the proposal about
+evaluator statements, observations, or comments that were not supplied as unsupported.
+
+Reasoning standard. A recurring failure pattern proves what happened, not why. Failure
+frequency, failure rate, or score rate alone does not establish a knowledge, skill, process,
+coaching, or training cause; a proposal that infers such a cause from counts alone makes a
+claim stronger than the evidence permits. Distinguish the observed behavioral defect, which
+structured facts can usually establish, from the causal claim (cause_domain,
+performance_dimension, explanation), which structured facts alone usually cannot. Check whether
+each cited supporting reference logically supports the claim it is cited for, whether cited
+conflicting evidence and uncited passing evidence weaken a broad claim, and whether important
+gaps are acknowledged in the proposal's missing_evidence. Missing qualitative evidence matters.
+A restrained proposal that reports cause_domain "undetermined" with honest missing_evidence is
+supported when the observed defect is backed by the evidence; do not penalize restraint.
+
+Outcomes. supported: the observed defect and every causal claim are backed by the evidence and
+nothing in the population materially contradicts them. partially_supported: the observed defect
+is backed but the causal claim, confidence, or scope exceeds the evidence, or uncited evidence
+weakens it. unsupported: the evidence contradicts the proposal or does not bear on its central
+claim. insufficient_evidence: the supplied population cannot adjudicate the proposal either way,
+typically because the distinguishing qualitative evidence is absent. Confidence measures how
+strongly the evidence supports the proposal as written, not how persuasive its prose is. Never
+assert or imply human approval; a human reviewer decides after this review. Return exactly one
+JSON object, no markdown or surrounding prose."""
+
+# Meaning of each response field. Types, enums, and bounds are rendered from the
+# ValidatorResponse schema so the contract cannot drift from the parser.
+FIELD_GUIDANCE = {
+    "validation_outcome": "The single outcome defined above.",
+    "support_assessment": "Plain-language reasoning for the outcome: which claims the evidence "
+                          "establishes, which exceed it, and which references contradict it.",
+    "supported_reference_ids": "References from the supplied population that actually support "
+                               "the proposal, whether or not the proposal cited them. Must be "
+                               "non-empty for supported and partially_supported.",
+    "contradicting_reference_ids": "References from the supplied population that weaken or "
+                                   "contradict the proposal, including uncited passing evidence. "
+                                   "A reference cannot appear in both reference lists.",
+    "unsupported_claims": "Claims the proposal makes that the evidence does not establish, "
+                          "quoted or closely paraphrased. Use [] when there are none. "
+                          "unsupported requires at least one entry here or in "
+                          "contradicting_reference_ids.",
+    "missing_evidence": "Evidence that would be needed to establish or refute the causal claim. "
+                        "Use [] when nothing is missing. Must be non-empty for "
+                        "insufficient_evidence.",
+    "provider_reported_confidence": "ALWAYS a JSON number literal such as 0.35, never a string, "
+                                    "percentage, or qualitative label such as \"low\".",
+}
 
 
 def response_contract() -> str:
     schema = ValidatorResponse.model_json_schema()
-    lines = ["Exactly these required keys, with no extras:"]
+    lines = ["Output contract. Exactly these required keys, with no extras:"]
     for name, prop in schema["properties"].items():
         if "$ref" in prop:
             prop = schema["$defs"][prop["$ref"].rsplit("/", 1)[1]]
-        lines.append(f'- "{name}": {_describe_type(prop)}')
+        lines.append(f'- "{name}": {_describe_type(prop)}. {FIELD_GUIDANCE[name]}')
     lines.append("All arrays remain JSON arrays, including single entries. Reference IDs must be copied "
-                 "from the supplied evidence population without duplicates; a reference cannot be in both "
-                 "reference lists. Confidence must be a JSON number, never a string or qualitative label. "
-                 "Do not output IDs, provider/model metadata, timestamps, or a replacement diagnosis. "
-                 "Malformed output is discarded without repair or retry.")
+                 "exactly from the supplied evidence population without duplicates. Confidence must be "
+                 "a JSON number, never a string or qualitative label. Do not output IDs, provider/model "
+                 "metadata, timestamps, or a replacement diagnosis. Malformed or incoherent output is "
+                 "discarded without repair or retry.")
     return "\n".join(lines)
 
 
@@ -117,33 +172,55 @@ def parse_validator_response(text: str, allowed: set[str]) -> ValidatorResponse:
         if (any(not REF_PATTERN.fullmatch(ref) for ref in refs) or len(refs) != len(set(refs))
                 or not set(refs) <= allowed):
             raise ValueError("invalid references")
+        # An outcome must be grounded in the population: "supported" without a supporting
+        # reference, "unsupported" without a named contradiction or unsupported claim, and
+        # "insufficient" without a named gap are incoherent and are refused, not repaired.
+        outcome = result.validation_outcome
+        if ((outcome in (ValidationOutcome.SUPPORTED, ValidationOutcome.PARTIALLY_SUPPORTED)
+             and not result.supported_reference_ids) or
+                (outcome == ValidationOutcome.UNSUPPORTED and not result.unsupported_claims
+                 and not result.contradicting_reference_ids) or
+                (outcome == ValidationOutcome.INSUFFICIENT_EVIDENCE and not result.missing_evidence)):
+            raise ValueError("incoherent outcome")
         return result
     except (ValueError, TypeError, ValidationError, AttributeError) as exc:
         raise ProviderOutputError("invalid_validator_output", "Validator returned invalid output") from exc
 
 
+MIN_IDENTIFIER_LENGTH = 3
+# Structured-only reasoning never sees comments, so only a long verbatim match indicates a
+# leak; short comments such as "Missed greeting" are ordinary diagnostic prose.
+MIN_FREE_TEXT_LENGTH = 20
+_LOCAL_ID_PATTERN = re.compile(r"\b(?:eval_|ev_|sig_)\w+|\b(?:source_lineage|source_filename|"
+                               r"source_sheet|excel_row|filename)\b|\b(?:row|sheet|file|path)\s*[:#]?\s*\d+")
+
+
 def _sensitive_diagnosis_text(diagnostics: DiagnosticService, texts: list[str]) -> bool:
     # A diagnosis is provider-authored text. Prevent known local identifiers from making a
     # second provider trip even if a fixture or compromised reasoner placed them in prose.
-    terms = set()
+    identifiers = set()
+    free_text = set()
     for evaluation in diagnostics.evaluations:
-        terms.update((evaluation.internal_id, evaluation.agent_name, evaluation.qa_name,
-                      evaluation.team_leader))
+        identifiers.update((evaluation.internal_id, evaluation.agent_name, evaluation.qa_name,
+                            evaluation.team_leader))
         for criterion in evaluation.criteria:
-            terms.update((criterion.lineage.source_filename, criterion.lineage.source_sheet,
-                          criterion.evaluator_feedback))
-            # Arbitrary answer strings can contain free text. Common yes/no values are
-            # too generic to screen without rejecting ordinary diagnosis prose.
-            if len(criterion.answer.strip()) > 10:
-                terms.add(criterion.answer)
+            identifiers.update((criterion.lineage.source_filename, criterion.lineage.source_sheet))
+            free_text.update((criterion.evaluator_feedback, criterion.answer))
     joined = "\n".join(texts).casefold()
-    return (any(term and len(term.strip()) >= 3 and term.casefold() in joined for term in terms)
-            or bool(re.search(r"\b(?:eval_|ev_|sig_)\w+|\b(?:source_lineage|source_filename|"
-                              r"source_sheet|excel_row|filename)\b|\b(?:row|sheet|file|path)\s*[:#]?\s*\d+",
-                              joined)))
+    # Identifiers match as whole words (as `redact_known_identities` does) so that a name such
+    # as "Ana" or a sheet called "QA" does not block prose containing "analysis" or "QA rows".
+    identifier_terms = [term.strip() for term in identifiers if term and len(term.strip()) >= MIN_IDENTIFIER_LENGTH]
+    if identifier_terms:
+        alternatives = "|".join(r"\s+".join(re.escape(part) for part in term.split()) for term in identifier_terms)
+        if re.search(rf"(?<!\w)(?:{alternatives})(?!\w)", joined, re.IGNORECASE):
+            return True
+    if any(term and len(term.strip()) >= MIN_FREE_TEXT_LENGTH and term.strip().casefold() in joined
+           for term in free_text):
+        return True
+    return bool(_LOCAL_ID_PATTERN.search(joined))
 
 
-def build_validation_request(diagnostics: DiagnosticService, hypothesis_id: str) -> tuple[dict, set[str]]:
+def build_validation_request(diagnostics: DiagnosticService, hypothesis_id: str) -> tuple[dict, set[str], dict]:
     with diagnostics._lock:
         record = diagnostics._record(hypothesis_id)
         if record.status != "awaiting_review":
@@ -203,7 +280,7 @@ def build_validation_request(diagnostics: DiagnosticService, hypothesis_id: str)
             set(request["citation_roles"]) != ROLE_KEYS or
             set(request["text_coverage"]) != TEXT_COVERAGE_KEYS):
         raise DiagnosticError("invalid_provider_input", "Validation request projection drifted")
-    return request, expected_refs
+    return request, expected_refs, lookup
 
 
 class SemanticEvidenceValidator(Protocol):
@@ -230,9 +307,10 @@ class ControlledTestEvidenceValidator:
 class BedrockEvidenceValidator:
     """Separate Converse invocation; only accepts a service-built allowlisted request."""
 
-    def __init__(self, *, client=None):
-        self.region = "us-east-1"
-        self.model_id = "global.anthropic.claude-sonnet-4-6"
+    def __init__(self, region: str = "us-east-1",
+                 model_id: str = "global.anthropic.claude-sonnet-4-6", *, client=None):
+        self.region = region
+        self.model_id = model_id
         self._client = client
 
     def _converse(self, request: dict):
@@ -276,7 +354,7 @@ class EvidenceValidationService:
         async with self._lock:
             if hypothesis_id in self._records:
                 return self.get(hypothesis_id)
-            request, allowed = build_validation_request(self.diagnostics, hypothesis_id)
+            request, allowed, lookup = build_validation_request(self.diagnostics, hypothesis_id)
             if isinstance(self.validator, UnavailableEvidenceValidator):
                 raise DiagnosticError("validator_unavailable", "No evidence validator is configured")
             if isinstance(self.validator, BedrockEvidenceValidator):
@@ -308,6 +386,8 @@ class EvidenceValidationService:
                 current = self.diagnostics._record(hypothesis_id)
                 if current.status != "awaiting_review":
                     raise DiagnosticError("invalid_state_transition", "Evidence review requires a proposed diagnosis")
+                resolve = lambda refs: tuple(EvidenceReference(item_id=lookup[ref][0],  # noqa: E731
+                                                               evaluation_id=lookup[ref][1]) for ref in refs)
                 result = EvidenceValidationRecord(
                     validation_id="val_" + sha256(hypothesis_id.encode()).hexdigest()[:24],
                     hypothesis_id=hypothesis_id, signal_id=current.provider_hypothesis.signal_id,
@@ -317,6 +397,8 @@ class EvidenceValidationService:
                     support_assessment=parsed.support_assessment,
                     supported_reference_ids=tuple(parsed.supported_reference_ids),
                     contradicting_reference_ids=tuple(parsed.contradicting_reference_ids),
+                    supported_evidence=resolve(parsed.supported_reference_ids),
+                    contradicting_evidence=resolve(parsed.contradicting_reference_ids),
                     unsupported_claims=tuple(parsed.unsupported_claims), missing_evidence=tuple(parsed.missing_evidence),
                     provider_reported_confidence=parsed.provider_reported_confidence,
                     provider_metadata=metadata, created_at=datetime.now(timezone.utc))

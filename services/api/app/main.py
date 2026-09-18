@@ -38,7 +38,7 @@ app.state.diagnostics = DiagnosticService(
 )
 app.state.evidence_validations = EvidenceValidationService(
     app.state.diagnostics,
-    BedrockEvidenceValidator()
+    BedrockEvidenceValidator(settings.bedrock_region, settings.bedrock_model_id)
     if settings.bedrock_enabled else UnavailableEvidenceValidator(),
 )
 app.state.demo_mode = "local_normalized" if settings.diagnostic_evaluations_path else "unconfigured"

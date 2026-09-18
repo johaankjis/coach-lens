@@ -1,4 +1,4 @@
-"""Invoke AWS-1 with synthetic QA only. Uses the normal AWS credential provider chain."""
+"""Invoke AWS-1 and AWS-3 with synthetic QA only. Uses the normal AWS credential provider chain."""
 
 import asyncio
 from datetime import date
@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services" / "api")
 from app.config import get_settings  # noqa: E402
 from app.diagnostics.bedrock import BedrockReasoner  # noqa: E402
 from app.diagnostics.engine import DiagnosticService  # noqa: E402
+from app.diagnostics.evidence_validator import BedrockEvidenceValidator, EvidenceValidationService  # noqa: E402
 from app.results_cx.models import CriterionResult, Domain, Evaluation, SourceLineage  # noqa: E402
 
 
@@ -52,6 +53,19 @@ async def main():
            "invocation_region": hypothesis.provider_metadata.invocation_region,
            "coverage": f"{signal.fail_count}/{signal.evaluated_results} results in "
                        f"{signal.evaluated_evaluations}/{signal.total_evaluations} evaluations"})
+    # AWS-3: a separate Converse call reviews the same provider-safe population against the
+    # proposal. It records a semantic outcome only; the record stays `awaiting_review`.
+    validations = EvidenceValidationService(
+        service, BedrockEvidenceValidator(settings.bedrock_region, settings.bedrock_model_id))
+    validation = await validations.run(hypothesis.hypothesis_id)
+    print({"validation_outcome": validation.validation_outcome.value,
+           "semantic_status": validation.semantic_status,
+           "supported_reference_count": len(validation.supported_reference_ids),
+           "contradicting_reference_count": len(validation.contradicting_reference_ids),
+           "unsupported_claim_count": len(validation.unsupported_claims),
+           "missing_evidence_count": len(validation.missing_evidence),
+           "confidence": validation.provider_reported_confidence,
+           "status_after_validation": service.get(hypothesis.hypothesis_id).status})
 
 
 if __name__ == "__main__":
