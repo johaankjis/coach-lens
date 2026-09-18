@@ -1,0 +1,31 @@
+# AWS-2: Real ResultsCX evidence boundary
+
+AWS-2 permits a narrowly prepared ResultsCX diagnostic bundle to reach Bedrock from the explicit local three-workbook demo loader when `COACHLENS_BEDROCK_ENABLED=true`. It does not authorize arbitrary normalized JSONL, API-submitted records, or a caller's safety assertion. The default constructor and normal API startup remain privacy blocked. The synthetic AWS-1 smoke path remains separate.
+
+## Local and remote evidence
+
+The M2 `Evaluation` and `CriterionResult` records, original comments, source QA scoring, local IDs, and `SourceLineage` stay local. M3 produces deterministic signals and an `EvidenceBundle` with exact source rows. AWS-2 applies a local text policy, projects only explicitly allowlisted facts, and assigns fresh `SIGNAL-001` and `EVID-###` references. The local preparation object retains `EVID-### -> local evidence ID -> evaluation ID -> SourceLineage`; only the opaque reference crosses the provider boundary. The normal M3 citation validator then checks the mapped local citations against the exact bundle stored for human review.
+
+The wire object has exactly `signal`, `evidence_items`, and `text_coverage`.
+
+`signal` permits `reference`, `domain`, `criterion`, `failed_criterion_result_count`, `passed_criterion_result_count`, `evaluated_criterion_result_count`, `failure_rate`, `pass_rate`, `evaluations_containing_criterion`, `total_loaded_evaluations`, `feedback_count`, `feedback_coverage`, `max_score_total`, `attained_score_total`, and `score_rate`.
+
+Each `evidence_items` entry permits `reference`, `domain`, `criterion`, `failed`, `max_score`, and `attained_score`. It may also contain `diagnostic_text: {kind: "minimized_evaluator_feedback", text: string}` only after an `ALLOW_MINIMIZED` decision. The original answer string is excluded; `failed` comes from M2's pass marker. Criterion wording is used only when it passes the narrow text policy unchanged; otherwise it becomes `[criterion withheld]` in the remote projection.
+
+`text_coverage` permits `total_evidence_items`, `evidence_items_with_feedback`, `minimized_text_items_allowed`, `text_items_blocked`, and `text_items_with_no_text`. Counts are deterministic per signal. `evidence_items_with_feedback` is M2's nonempty-string count; a whitespace-only value can count there while receiving `NO_TEXT` under AWS-2. `BLOCK` means local text existed but was not transmitted. A blocked text row still contributes its structured score facts. The model prompt explicitly forbids treating blocked or missing text as causal support.
+
+No remote field intentionally serializes agent, QA evaluator, or team-leader names; raw evaluator comments; raw answer strings; local evidence or evaluation IDs; `SourceLineage`; workbook filename, sheet, path, or row; or a raw M2/M3 model. The Bedrock request is built by naming each field, never by dumping a raw domain object. Tests assert the exact key sets and inspect a mocked Converse request.
+
+## Local free-text decisions
+
+`NO_TEXT` applies to missing or whitespace-only comments. `BLOCK` applies to text longer than 1,000 characters, text containing a digit, `@`, a URL marker, slash or backslash, control character, or text left without substantive words after known-name suppression. `ALLOW_MINIMIZED` applies only after whole-token, case-insensitive replacement of every recorded agent, evaluator, and leader name in the loaded population with `[redacted]`, followed by a conservative residual known-term check. These decisions run locally and deterministically. The policy preserves remaining wording; it does not infer themes or causes.
+
+Identifier suppression is data minimization, **not anonymization**. These rules do not detect all names, aliases, member identities, healthcare details, PHI, or other sensitive content. A permitted comment is not certified PHI-free. CoachLens does not claim HIPAA compliance from this mechanism alone. Review the policy, source criteria, access controls, and deployment before any production use. The local reviewer evidence routes still expose raw evidence and need their own access controls.
+
+## Enablement and review
+
+Only `load_results_cx_demo` can mint the in-process trusted list after the exact three required workbooks pass M2 discovery and normalization. `install_results_cx_demo` installs the real-capable reasoner only for that provenance object and only when Bedrock is configured. The reasoner binds to the loaded population, reconstructs and checks the M3 provider view against its local records at diagnosis time, prepares the real wire bundle itself, and validates its allowlist before calling Converse. A plain list, the normal JSONL startup, an environment variable claiming safety, or an HTTP body/header/query assertion cannot unlock it. This is an in-process authorization boundary against public callers, not a defense against arbitrary code execution inside the server.
+
+Bedrock output retains AWS-1's exact JSON schema, stop-reason and citation checks, sanitized errors, no repair or fallback, and service-stamped `generation_mode`. A successful diagnosis enters `awaiting_review`; a supervisor must Approve, Reject, or Revise. Failure frequency alone does not establish a training need, and `undetermined` remains a valid diagnosis.
+
+The default model ID remains `global.anthropic.claude-sonnet-4-6` and the client region remains `us-east-1`. **The global inference profile may route processing outside the client region.** `invocation_region=us-east-1` records the client endpoint setting, not a guarantee of in-region processing.

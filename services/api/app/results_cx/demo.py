@@ -20,6 +20,18 @@ REQUIRED_WORKBOOKS = {
 REAL_MODE = "real_results_cx"
 
 
+class TrustedResultsCXEvaluations(list):
+    """In-process provenance minted only after strict local workbook validation."""
+
+    def __init__(self, evaluations: list[Evaluation], *, _loader_token: object):
+        if _loader_token is not _TRUSTED_LOADER_TOKEN:
+            raise ValueError("Trusted ResultsCX evidence requires the local workbook loader")
+        super().__init__(evaluations)
+
+
+_TRUSTED_LOADER_TOKEN = object()
+
+
 def load_results_cx_demo(raw_dir: Path | str) -> list[Evaluation]:
     """Validate the exact local inputs, then delegate parsing and joining to M2."""
     root = Path(raw_dir)
@@ -46,18 +58,22 @@ def load_results_cx_demo(raw_dir: Path | str) -> list[Evaluation]:
             raise PipelineValidationError(
                 "demo_domain_mismatch", f"{name} does not contain the expected {domain.value} QA domain"
             )
-    return normalize(sources)
+    return TrustedResultsCXEvaluations(normalize(sources), _loader_token=_TRUSTED_LOADER_TOKEN)
 
 
 def install_results_cx_demo(app, evaluations: list[Evaluation]) -> None:
     """Serve M2 records with unavailable design providers and truthful diagnostic mode.
 
-    Bedrock may be installed by setting, but its default privacy policy refuses remote
-    invocation with these real records before an AWS client is created.
+    Only the strict loader's provenance object enables AWS-2 preparation when configured.
+    A plain list keeps the Bedrock privacy block.
     """
     settings = get_settings()
-    reasoner = (BedrockReasoner(settings.bedrock_region, settings.bedrock_model_id)
-                if settings.bedrock_enabled else UnavailableReasoner())
+    if settings.bedrock_enabled and isinstance(evaluations, TrustedResultsCXEvaluations):
+        reasoner = BedrockReasoner.for_trusted_results_cx(
+            settings.bedrock_region, settings.bedrock_model_id, evaluations)
+    else:
+        reasoner = (BedrockReasoner(settings.bedrock_region, settings.bedrock_model_id)
+                    if settings.bedrock_enabled else UnavailableReasoner())
     app.state.diagnostics = DiagnosticService(evaluations, reasoner)
     unavailable = UnavailableDesignProvider()
     app.state.designs = DesignService(app.state.diagnostics, unavailable, unavailable)

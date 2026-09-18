@@ -1,4 +1,4 @@
-"""Serve the M4/M5 workspace with local ResultsCX evidence and no reasoner."""
+"""Serve the local ResultsCX workspace with an optional AWS-2 diagnostic reasoner."""
 
 import argparse
 from pathlib import Path
@@ -12,7 +12,7 @@ from app.results_cx.pipeline import PipelineValidationError  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run local ResultsCX review demo (no AI provider)")
+    parser = argparse.ArgumentParser(description="Run local ResultsCX review demo")
     parser.add_argument("--input", type=Path, default=Path("data/raw"))
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
@@ -27,7 +27,7 @@ def main() -> int:
     import uvicorn
 
     install_results_cx_demo(app, evaluations)
-    diagnostic_state = ("Bedrock installed; remote invocation privacy-blocked"
+    diagnostic_state = ("Bedrock diagnostic provider with AWS-2 minimized evidence"
                         if get_settings().bedrock_enabled else "diagnostic provider unavailable")
     print(f"Mode: REAL RESULTS CX (local data; {diagnostic_state}; design providers unavailable)", flush=True)
     print(f"Loaded {len(evaluations)} evaluations, "

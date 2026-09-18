@@ -1,5 +1,7 @@
 # M3 diagnostic engine
 
+For the separately prepared real Bedrock path introduced after M3, see [AWS-2 real evidence boundary](aws2-real-evidence-boundary.md). The M3 provider view described below remains a local view and is not the AWS-2 wire payload.
+
 ## Three separate layers
 
 **Fact:** M2 canonical `Evaluation` and `CriterionResult` records establish pass/fail, scores, feedback presence, and source lineage. M3 `PerformanceSignal` reuses M2 `analyze()` for deterministic per-criterion aggregates. It includes zero-failure criteria and ranks by descending fail count, then fail rate, then domain and criterion. This order is a transparent sort, not a ResultsCX severity policy. Rates are over the criterion rows present; `evaluated_evaluations` and `total_evaluations` state how many loaded evaluations the criterion actually covers, and `build_bundle` refuses a signal whose counts or `total_evaluations` disagree with the records it is served with. A signal has no causal category.
