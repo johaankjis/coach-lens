@@ -11,31 +11,27 @@
   },
   "rewrites": [
     {
-      "source": "/api/diagnostics/:path*",
+      "source": "/diagnostics/(.*)",
       "destination": {
-        "service": "backend",
-        "path": "/diagnostics/:path*"
+        "service": "backend"
       }
     },
     {
-      "source": "/api/designs/:path*",
+      "source": "/designs/(.*)",
       "destination": {
-        "service": "backend",
-        "path": "/designs/:path*"
+        "service": "backend"
       }
     },
     {
-      "source": "/api/interventions/:path*",
+      "source": "/interventions/(.*)",
       "destination": {
-        "service": "backend",
-        "path": "/interventions/:path*"
+        "service": "backend"
       }
     },
     {
-      "source": "/api/health",
+      "source": "/health",
       "destination": {
-        "service": "backend",
-        "path": "/health"
+        "service": "backend"
       }
     },
     {
