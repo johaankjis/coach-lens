@@ -53,4 +53,15 @@ app.state.designs = DesignService(
     controlled_fixture=True,
 )
 
+
 app.state.demo_mode = "synthetic_demo"
+
+# Vercel exposes the FastAPI service under /api/*.
+# Mount the same application there so existing frontend API calls work unchanged.
+from fastapi import FastAPI
+
+public_app = FastAPI(title="CoachLens Public API")
+public_app.mount("/api", app)
+
+app = public_app
+

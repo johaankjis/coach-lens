@@ -11,25 +11,7 @@
   },
   "rewrites": [
     {
-      "source": "/diagnostics/(.*)",
-      "destination": {
-        "service": "backend"
-      }
-    },
-    {
-      "source": "/designs/(.*)",
-      "destination": {
-        "service": "backend"
-      }
-    },
-    {
-      "source": "/interventions/(.*)",
-      "destination": {
-        "service": "backend"
-      }
-    },
-    {
-      "source": "/health",
+      "source": "/api/:path*",
       "destination": {
         "service": "backend"
       }
