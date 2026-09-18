@@ -163,7 +163,7 @@ export default function InterventionPanel({
               {review.provider_metadata.model ? ` · ${review.provider_metadata.model}` : ""}
             </div>
             <p className={`handoff-note ${record.handoff.training_design_gate}`} role="note">
-              {gateText(record.handoff.training_design_gate, record.proposal.intervention_type)}
+              {gateText(record.handoff.training_design_gate, record.proposal.intervention_type, record.status)}
             </p>
           </>
         )}

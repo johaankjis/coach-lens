@@ -111,8 +111,8 @@ class DesignHandoff(FrozenModel):
     """The upstream decision AWS-5 consumes. Deterministic projection of the two records above.
 
     `training_design_gate` is a lifecycle gate, not an approval: `permitted` means the proposed
-    intervention is a training or practice type and the solution review did not find it
-    misaligned or undecidable. `withheld` means it is a training or practice type that the
+    intervention is a training or practice type and the solution review found it aligned.
+    `withheld` means it is a training or practice type that the
     review questioned, so the training generator must not run on it. `not_applicable` covers
     coaching, process correction, and investigation, which never reach the training generator.
     No value here means a human approved the intervention.
@@ -152,7 +152,7 @@ def build_handoff(proposal: InterventionProposal, validation: SolutionValidation
         gate: TrainingDesignGate = "not_applicable"
     elif validation is None:
         gate = "awaiting_solution_validation"
-    elif validation.alignment_outcome in (SolutionAlignment.ALIGNED, SolutionAlignment.PARTIALLY_ALIGNED):
+    elif validation.alignment_outcome == SolutionAlignment.ALIGNED:
         gate = "permitted"
     else:
         gate = "withheld"
@@ -165,4 +165,3 @@ def build_handoff(proposal: InterventionProposal, validation: SolutionValidation
 
 def solution_status_for(outcome: SolutionAlignment) -> SolutionStatus:
     return "solution_validated" if outcome == SolutionAlignment.ALIGNED else "solution_questioned"
-

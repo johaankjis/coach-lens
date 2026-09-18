@@ -4,8 +4,8 @@
 existing `DesignService` orchestration and `validate_decision` checks are unchanged. Instead
 of asking a provider to decide, it reads the stored AWS-4 record and projects it onto the M5
 `InterventionDecision` contract. The training designer therefore only ever runs on a
-training or practice intervention whose solution review did not question it; coaching,
-process correction, and investigation are recorded as non-training or investigate results
+training or practice intervention whose solution review found it aligned; aligned coaching,
+process correction, and investigation proposals become non-training or investigate results
 and never reach the training generator.
 """
 
@@ -14,7 +14,7 @@ from app.design.service import DesignError
 
 from .bedrock import InterventionError
 from .models import InterventionRecord
-from .service import InterventionService, intervention_provider_kind
+from .service import InterventionService, diagnosis_digest, intervention_provider_kind
 
 
 # Fixed messages for the only handoff conditions that may reach a client through M5.
@@ -22,6 +22,7 @@ HANDOFF_ERRORS = {
     "intervention_not_proposed": "Propose and validate an intervention before design",
     "solution_not_validated": "Validate the proposed intervention before design",
     "training_design_withheld": "Training design withheld: the solution review questioned the proposed training",
+    "solution_questioned": "The solution review questioned the proposed intervention; a new reviewed proposal is required before design",
     "intervention_stale": "The stored intervention does not match the current validated diagnosis",
 }
 
@@ -73,10 +74,16 @@ class ValidatedInterventionHandoff:
         except InterventionError as exc:
             code = "intervention_not_proposed" if exc.code == "intervention_not_found" else "intervention_stale"
             raise DesignError(code, HANDOFF_ERRORS[code]) from exc
-        if record.validated_diagnosis.approved_at != context.approved.approved_at:
+        # M5 passes a provider-safe context with the reviewer name redacted. Compare the
+        # full approved diagnosis after applying that same redaction to the stored copy.
+        stored_for_provider = record.validated_diagnosis.model_copy(
+            update={"approved_by": context.approved.approved_by})
+        if diagnosis_digest(stored_for_provider) != diagnosis_digest(context.approved):
             raise DesignError("intervention_stale", HANDOFF_ERRORS["intervention_stale"])
         if record.solution_validation is None:
             raise DesignError("solution_not_validated", HANDOFF_ERRORS["solution_not_validated"])
         if record.handoff.training_design_gate == "withheld":
             raise DesignError("training_design_withheld", HANDOFF_ERRORS["training_design_withheld"])
+        if record.solution_validation.solution_status != "solution_validated":
+            raise DesignError("solution_questioned", HANDOFF_ERRORS["solution_questioned"])
         return decision_from_record(record, context)

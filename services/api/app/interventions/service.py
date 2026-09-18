@@ -247,6 +247,13 @@ class InterventionService:
             text = await self._invoke(self.reasoner.propose, context.request,
                                       "invalid_intervention_output", "intervention_provider_failure")
             parsed = parse_intervention_response(text, set(context.allowed_refs))
+            # The solution validator receives this proposal verbatim. Refuse known local
+            # identifiers or source text in provider prose before storing or resending it.
+            proposal_text = [parsed.recommendation, parsed.rationale, parsed.target_change,
+                             parsed.fit_to_cause, *parsed.limitations, *parsed.missing_evidence]
+            if _sensitive_diagnosis_text(self.diagnostics, proposal_text):
+                raise InterventionOutputError("invalid_intervention_output",
+                                              ERROR_MESSAGES["invalid_intervention_output"])
             approved = context.approved
             # The approval is terminal in M3, but re-read it after the provider call anyway so
             # the record can never describe a diagnosis other than the one currently approved.

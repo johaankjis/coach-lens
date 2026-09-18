@@ -216,7 +216,8 @@ address the validated cause and the observed performance problem, given the evid
 the intervention only. The human-validated diagnosis is authoritative and is not under review:
 never propose, suggest, or imply a replacement diagnosis, cause_domain, or
 performance_dimension, and never propose a replacement intervention. Do not recalculate or
-reinterpret the deterministic QA facts.
+reinterpret the deterministic QA facts. This is a review of logical fit before an intervention;
+do not claim it was implemented or effective, or that learner performance improved.
 
 Input. signal and evidence_items are deterministic QA facts; counts and rates cover only the
 evaluated criterion results, and total_loaded_evaluations may exceed
@@ -301,8 +302,11 @@ def parse_solution_response(text: str) -> SolutionResponse:
         # point or with a misaligned point, "misaligned" without a misalignment or unsupported
         # assumption, and "insufficient" without a gap are incoherent and refused, not repaired.
         outcome = result.alignment_outcome
-        if ((outcome == SolutionAlignment.ALIGNED and (not result.aligned_points or result.misaligned_points)) or
-                (outcome == SolutionAlignment.PARTIALLY_ALIGNED and not result.aligned_points) or
+        if ((outcome == SolutionAlignment.ALIGNED and (not result.aligned_points or result.misaligned_points
+                                                      or result.unsupported_assumptions)) or
+                (outcome == SolutionAlignment.PARTIALLY_ALIGNED and
+                 (not result.aligned_points or not (result.misaligned_points or
+                                                    result.unsupported_assumptions or result.missing_information))) or
                 (outcome == SolutionAlignment.MISALIGNED and not result.misaligned_points
                  and not result.unsupported_assumptions) or
                 (outcome == SolutionAlignment.INSUFFICIENT_EVIDENCE and not result.missing_information)):

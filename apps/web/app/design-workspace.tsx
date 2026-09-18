@@ -212,7 +212,7 @@ export default function DesignWorkspace({
           </span>
           {decision.intervention_type && (
             <span>
-              Validated intervention: {label(decision.intervention_type)}
+              Solution-reviewed intervention: {label(decision.intervention_type)}
               {decision.solution_alignment
                 ? ` · solution review ${label(decision.solution_alignment)}`
                 : ""}{" "}

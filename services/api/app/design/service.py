@@ -41,6 +41,7 @@ PASSTHROUGH_DESIGN_ERRORS = {
     "intervention_not_proposed": "Propose and validate an intervention before design",
     "solution_not_validated": "Validate the proposed intervention before design",
     "training_design_withheld": "Training design withheld: the solution review questioned the proposed training",
+    "solution_questioned": "The solution review questioned the proposed intervention; a new reviewed proposal is required before design",
     "intervention_stale": "The stored intervention does not match the current validated diagnosis",
 }
 

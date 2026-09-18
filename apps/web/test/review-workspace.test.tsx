@@ -216,7 +216,7 @@ describe("diagnostic review semantics", () => {
     expect(
       screen.getByText(/not a statistically calibrated probability/),
     ).toBeInTheDocument();
-    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR INTERVENTION REVIEW")).not.toBeInTheDocument();
   });
 
   it("opens supporting and conflicting citations with source lineage", async () => {
@@ -259,7 +259,7 @@ describe("diagnostic review semantics", () => {
       screen.getByRole("button", { name: "Approve diagnosis" }),
     );
     expect(screen.getByText("NOT YET VALIDATED")).toBeInTheDocument();
-    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR INTERVENTION REVIEW")).not.toBeInTheDocument();
     finish(
       reply({
         ...proposed,
@@ -274,7 +274,7 @@ describe("diagnostic review semantics", () => {
         ],
       }),
     );
-    expect(await screen.findByText("READY FOR DESIGN")).toBeInTheDocument();
+    expect(await screen.findByText("READY FOR INTERVENTION REVIEW")).toBeInTheDocument();
     expect(screen.getByText("HUMAN VALIDATED")).toBeInTheDocument();
     expect(screen.getByText("ACCEPTED BY REVIEWER")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Working diagnosis" })).toBeInTheDocument();
@@ -315,7 +315,7 @@ describe("diagnostic review semantics", () => {
       screen.getByRole("button", { name: "Confirm rejection" }),
     );
     expect(await screen.findByText("Diagnosis rejected")).toBeInTheDocument();
-    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR INTERVENTION REVIEW")).not.toBeInTheDocument();
   });
 
   it("preserves the original proposal and requires separate approval after revision", async () => {
@@ -377,7 +377,7 @@ describe("diagnostic review semantics", () => {
     expect(screen.getByText("REVISED · NOT YET VALIDATED")).toBeInTheDocument();
     expect(screen.getByText(/PENDING APPROVAL/)).toBeInTheDocument();
     expect(screen.queryByText("HUMAN VALIDATED")).not.toBeInTheDocument();
-    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR INTERVENTION REVIEW")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Approve human revision" }),
     ).toBeInTheDocument();
@@ -410,7 +410,7 @@ describe("diagnostic review semantics", () => {
     );
     await screen.findByRole("alert");
     expect(screen.getByText("NOT YET VALIDATED")).toBeInTheDocument();
-    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR INTERVENTION REVIEW")).not.toBeInTheDocument();
     expect(screen.queryByText("Internal secret")).not.toBeInTheDocument();
   });
 
@@ -531,7 +531,7 @@ describe("diagnostic review semantics", () => {
     expect(screen.queryByText(/CONTROLLED DEMO/)).not.toBeInTheDocument();
     for (const cause of ["Skill Gap", "Knowledge Gap", "Process Gap"])
       expect(screen.queryByText(cause)).not.toBeInTheDocument();
-    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR INTERVENTION REVIEW")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "DESIGN INTERVENTION" })).not.toBeInTheDocument();
     expect(mock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
     expect(mock.mock.calls.some(([path]) => String(path).includes("/api/designs/"))).toBe(false);
@@ -753,7 +753,7 @@ describe("adversarial review states", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Process Gap · Undetermined")).toBeInTheDocument();
     expect(screen.getByText("Human-revised working diagnosis")).toBeInTheDocument();
-    expect(screen.getByText("READY FOR DESIGN")).toBeInTheDocument();
+    expect(screen.getByText("READY FOR INTERVENTION REVIEW")).toBeInTheDocument();
     expect(screen.getByText("Revision approved")).toBeInTheDocument();
   });
 
@@ -769,7 +769,7 @@ describe("adversarial review states", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "unexpected response",
     );
-    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR INTERVENTION REVIEW")).not.toBeInTheDocument();
     expect(screen.queryByText("HUMAN VALIDATED")).not.toBeInTheDocument();
   });
 
@@ -779,7 +779,7 @@ describe("adversarial review states", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "unexpected response",
     );
-    expect(screen.queryByText("READY FOR DESIGN")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY FOR INTERVENTION REVIEW")).not.toBeInTheDocument();
   });
 
   it("names a citation that is outside this signal's evidence instead of showing nothing", async () => {

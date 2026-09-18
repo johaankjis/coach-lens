@@ -1106,7 +1106,7 @@ export default function ReviewWorkspace() {
                                     ).toLocaleString()
                                   : ""}
                               </div>
-                              {!designResult && <div className="ready">READY FOR DESIGN <span>→</span></div>}
+                              {!designResult && <div className="ready">READY FOR INTERVENTION REVIEW <span>→</span></div>}
                               <InterventionPanel
                                 record={currentIntervention}
                                 humanRevised={record.human_revision !== null}
@@ -1117,13 +1117,13 @@ export default function ReviewWorkspace() {
                               />
                               {interventionStep === "propose" && <p role="status">Proposing intervention…</p>}
                               {interventionStep === "validate" && <p role="status">Validating the proposed solution…</p>}
-                              {!designResult && trainingGate === "withheld" && (
-                                <p className="design-withheld" role="note">Training design is withheld. The solution review questioned the proposed training, so nothing is handed to the M5 training generator. Revisit the diagnosis or the proposal before designing.</p>
+                              {!designResult && currentIntervention?.status === "solution_questioned" && (
+                                <p className="design-withheld" role="note">{trainingGate === "withheld" ? "Training design is withheld. The solution review questioned the proposed training, so nothing is handed to the M5 training generator." : "M5 handoff is withheld. The solution review questioned the proposed intervention."} A corrected proposal needs a new diagnosis review run.</p>
                               )}
-                              {!designResult && trainingGate !== null && trainingGate !== "withheld" && <>
+                              {!designResult && currentIntervention?.status === "solution_validated" && <>
                                 <p className="design-transition">
                                   {trainingGate === "permitted"
-                                    ? "Design Intervention hands the validated intervention to M5, which drafts a training outline, activities, and practice for independent alignment review."
+                                    ? "Design Intervention hands the solution-reviewed proposal to M5, which drafts a training outline, activities, and practice for independent alignment review."
                                     : "Design Intervention records the non-training decision in M5. No training outline, activities, practice, or rubric will be generated."}
                                 </p>
                                 <button type="button" className="button primary" disabled={busy || designing} onClick={() => void designIntervention()}>DESIGN INTERVENTION</button>

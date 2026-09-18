@@ -232,7 +232,7 @@ def test_case_d_investigation_without_missing_evidence_fails_closed():
 # --- E: high failure frequency alone does not justify training --------------------------------
 
 def test_case_e_frequency_alone_training_claim_is_questioned_with_the_facts_in_view():
-    service, reasoner, validator, _, _ = build(
+    service, reasoner, validator, _, signal = build(
         {"cause_domain": "knowledge_gap", "performance_dimension": "capability",
          "explanation": "A 100% failure rate proves the agents lack knowledge.", "missing_evidence": []},
         {"rationale": "Every evaluated greeting failed, so training is required."},
@@ -244,7 +244,10 @@ def test_case_e_frequency_alone_training_claim_is_questioned_with_the_facts_in_v
     assert reasoner.requests[0]["signal"]["failure_rate"] == "1"
     assert validator.requests[0]["signal"]["failed_criterion_result_count"] == 2
     assert record.status == "solution_questioned" and record.solution_validation.unsupported_assumptions
-    assert record.handoff.training_design_gate == "permitted"  # Questioned, not withheld, for partial alignment.
+    assert record.handoff.training_design_gate == "withheld"
+    with pytest.raises(DesignError) as error:
+        asyncio.run(design_service(service, signal).run("hyp_1"))
+    assert error.value.code == "training_design_withheld"
     for prompt, fragment in ((REASONER_PROMPT, "frequency alone never justifies training"),
                              (REASONER_PROMPT, "A performance problem does not automatically mean training"),
                              (VALIDATOR_PROMPT, "Never equate a high failure rate with a training need"),
@@ -538,6 +541,18 @@ def test_local_identifiers_in_validated_text_block_the_wire(kwargs):
     assert error.value.code == "provider_privacy_blocked" and not reasoner.requests and not validator.requests
 
 
+@pytest.mark.parametrize("text", ["Person One needs coaching", "Use eval_1 as the example",
+                                        "Read row 2 of synthetic.xlsx"])
+def test_reasoner_prose_cannot_reintroduce_identifiers_into_validator_request(text):
+    service, reasoner, validator, _, _ = build(None, {"recommendation": text})
+    with pytest.raises(InterventionOutputError) as error:
+        asyncio.run(service.propose("hyp_1"))
+    assert error.value.code == "invalid_intervention_output"
+    assert len(reasoner.requests) == 1 and not validator.requests
+    with pytest.raises(InterventionError, match="No intervention"):
+        service.get("hyp_1")
+
+
 def test_remote_adapters_require_a_bound_bedrock_diagnosis():
     # A fixture diagnosis population never reaches Bedrock through AWS-4.
     diagnosis, _, _, _ = approved_diagnosis()
@@ -711,6 +726,31 @@ def test_handoff_gate_is_a_lifecycle_projection():
     assert json.loads(record.model_dump_json())["handoff"]["human_reviewed_intervention"] is False
 
 
+def test_questioned_non_training_intervention_cannot_enter_m5():
+    service, _, _, _, signal = build(
+        None, {"intervention_type": "process_correction"},
+        {"alignment_outcome": "partially_aligned", "missing_information": ["Whether the workflow is the cause"]})
+    record = propose_and_validate(service)
+    assert record.status == "solution_questioned"
+    assert record.handoff.training_design_gate == "not_applicable"
+    designs = design_service(service, signal, ForbiddenTraining())
+    with pytest.raises(DesignError) as error:
+        asyncio.run(designs.run("hyp_1"))
+    assert error.value.code == "solution_questioned"
+    with pytest.raises(DesignError, match="No design run"):
+        designs.get("hyp_1")
+
+
+def test_aligned_output_with_unsupported_assumptions_fails_closed():
+    with pytest.raises(InterventionOutputError) as error:
+        parse_solution_response(json.dumps(solution_response(
+            unsupported_assumptions=["Frequency alone establishes the training need"])))
+    assert error.value.code == "invalid_solution_output"
+    with pytest.raises(InterventionOutputError):
+        parse_solution_response(json.dumps(solution_response(
+            alignment_outcome="partially_aligned")))
+
+
 def test_handoff_requires_proposal_and_validation_before_design():
     service, _, _, _, signal = build()
     designs = design_service(service, signal, ForbiddenTraining())
@@ -726,6 +766,18 @@ def test_handoff_requires_proposal_and_validation_before_design():
     asyncio.run(service.validate_solution("hyp_1"))
     designs.training = DemoDesignFixture(signal.signal_id)
     assert asyncio.run(designs.run("hyp_1")).training_design is not None
+
+
+def test_handoff_rejects_a_different_diagnosis_even_with_same_approval_time():
+    service, _, _, _, signal = build()
+    propose_and_validate(service)
+    handoff = ValidatedInterventionHandoff(service)
+    context = design_service(service, signal)._context("hyp_1").provider_view()
+    changed = context.approved.diagnosis.model_copy(update={"explanation": "A different cause account"})
+    foreign = context.model_copy(update={"approved": context.approved.model_copy(update={"diagnosis": changed})})
+    with pytest.raises(DesignError) as error:
+        asyncio.run(handoff.decide(foreign))
+    assert error.value.code == "intervention_stale"
 
 
 def test_demo_fixtures_pass_the_real_parsers_and_never_train_the_investigate_branch():
@@ -750,6 +802,12 @@ def test_demo_fixtures_pass_the_real_parsers_and_never_train_the_investigate_bra
         if signal.signal_id == resolution.signal_id:
             assert record.proposal.intervention_type == "practice_simulation" and record.status == "solution_validated"
             assert result.training_design is not None
+        elif signal.criterion == "Required follow-up prompt available in workflow":
+            assert record.validated_diagnosis.diagnosis.cause_domain == "process_gap"
+            assert record.proposal.intervention_type == "process_correction"
+            assert record.solution_validation.alignment_outcome == "aligned"
+            assert result.status == "alternative_recommended" and result.training_design is None
+            assert "workflow" in record.proposal.target_change
         else:
             assert record.proposal.intervention_type == "investigate_further"
             assert result.status == "evidence_required" and result.training_design is None
@@ -848,6 +906,10 @@ def test_context_builder_requires_approval_and_verifies_the_population():
     source, signal, bundle = prepared()
     pending = DiagnosticService(source, ControlledTestReasoner(diagnostic_response(bundle)))
     asyncio.run(pending.diagnose(signal.signal_id))
+    with pytest.raises(DiagnosticError) as error:
+        build_intervention_context(pending, "hyp_1")
+    assert error.value.code == "diagnosis_not_approved"
+    pending.reject("hyp_1", "lead", "Cause is not supported")
     with pytest.raises(DiagnosticError) as error:
         build_intervention_context(pending, "hyp_1")
     assert error.value.code == "diagnosis_not_approved"

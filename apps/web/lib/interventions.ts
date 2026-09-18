@@ -75,19 +75,23 @@ export function isInterventionRecord(v: unknown): v is InterventionRecord {
   if (!obj(handoff) || handoff.hypothesis_id !== v.hypothesis_id || handoff.intervention_id !== v.proposal.intervention_id || handoff.intervention_type !== v.proposal.intervention_type || handoff.human_reviewed_intervention !== false) return false;
   if (!["training", "non_training", "investigate"].includes(handoff.decision_type as string)) return false;
   if (!["awaiting_solution_validation", "permitted", "withheld", "not_applicable"].includes(handoff.training_design_gate as string)) return false;
+  const training = v.proposal.intervention_type === "training" || v.proposal.intervention_type === "practice_simulation";
+  if (handoff.decision_type !== (training ? "training" : v.proposal.intervention_type === "investigate_further" ? "investigate" : "non_training")) return false;
   if (v.solution_validation === null) {
-    return v.status === "intervention_proposed" && handoff.solution_validation_id === null && handoff.solution_status === null && handoff.training_design_gate !== "permitted" && handoff.training_design_gate !== "withheld";
+    return v.status === "intervention_proposed" && handoff.solution_validation_id === null && handoff.solution_status === null &&
+      handoff.training_design_gate === (training ? "awaiting_solution_validation" : "not_applicable");
   }
   if (!validation(v.solution_validation) || v.solution_validation.intervention_id !== v.proposal.intervention_id || v.solution_validation.hypothesis_id !== v.hypothesis_id) return false;
   if (v.status !== v.solution_validation.solution_status || handoff.solution_status !== v.status || handoff.solution_validation_id !== v.solution_validation.solution_validation_id) return false;
-  return handoff.training_design_gate !== "awaiting_solution_validation";
+  return handoff.training_design_gate === (training ? v.status === "solution_validated" ? "permitted" : "withheld" : "not_applicable");
 }
 
 /** Plain-language gate description. The gate is a lifecycle projection, never an approval. */
-export function gateText(gate: TrainingDesignGate, type: InterventionType): string {
+export function gateText(gate: TrainingDesignGate, type: InterventionType, status?: InterventionRecord["status"]): string {
   const kind = type.replaceAll("_", " ");
   if (gate === "permitted") return `Training design may proceed on this ${kind} proposal. The solution review did not question it; a human has not approved it, and any design still needs independent alignment review.`;
   if (gate === "withheld") return `Training design is withheld. The solution review questioned this ${kind} proposal, so nothing is handed to the training generator.`;
-  if (gate === "not_applicable") return `This ${kind} proposal does not call for training. It is recorded as a non-training decision; no training outline, activities, practice, or rubric will be generated.`;
+  if (gate === "not_applicable" && status === "solution_questioned") return `This ${kind} proposal does not call for training, but the solution review questioned its fit. It is withheld from M5; a corrected proposal needs a new diagnosis review run.`;
+  if (gate === "not_applicable") return `This ${kind} proposal does not call for training. Once aligned, it can be recorded as a non-training decision; no training outline, activities, practice, or rubric will be generated.`;
   return "Validate the solution before anything is handed downstream.";
 }

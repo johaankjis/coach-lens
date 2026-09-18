@@ -3,7 +3,7 @@ import type { InterventionRecord, InterventionType, SolutionAlignment } from "..
 const GATE = (type: InterventionType, outcome: SolutionAlignment | null): InterventionRecord["handoff"]["training_design_gate"] => {
   if (type !== "training" && type !== "practice_simulation") return "not_applicable";
   if (outcome === null) return "awaiting_solution_validation";
-  return outcome === "aligned" || outcome === "partially_aligned" ? "permitted" : "withheld";
+  return outcome === "aligned" ? "permitted" : "withheld";
 };
 const DECISION = (type: InterventionType): InterventionRecord["handoff"]["decision_type"] =>
   type === "training" || type === "practice_simulation" ? "training" : type === "investigate_further" ? "investigate" : "non_training";

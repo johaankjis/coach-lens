@@ -75,7 +75,7 @@ describe("AWS-4 intervention and solution stages", () => {
     });
     render(<ReviewWorkspace />);
     await loaded();
-    expect(screen.getByText("READY FOR DESIGN")).toBeInTheDocument();
+    expect(screen.getByText("READY FOR INTERVENTION REVIEW")).toBeInTheDocument();
     expect(screen.getByText(/training has not yet been selected/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "DESIGN INTERVENTION" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Propose intervention" }));
@@ -159,6 +159,20 @@ describe("AWS-4 intervention and solution stages", () => {
     expect(screen.getByText(/records the non-training decision in M5/)).toBeInTheDocument();
   });
 
+  it("withholds M5 for a partially aligned training or non-training proposal", async () => {
+    for (const type of ["training", "process_correction"] as const) {
+      stored = interventionFixture(type, "partially_aligned");
+      route();
+      const view = render(<ReviewWorkspace />);
+      await loaded();
+      const solution = await screen.findByRole("region", { name: "Solution validation" });
+      expect(within(solution).getByText("SOLUTION QUESTIONED")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "DESIGN INTERVENTION" })).not.toBeInTheDocument();
+      expect(screen.getByText(/A corrected proposal needs a new diagnosis review run/)).toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
   it("opens the intervention's cited evidence in the inspector by local reference", async () => {
     stored = interventionFixture();
     route();
@@ -224,7 +238,7 @@ describe("AWS-4 record guard and handoff text", () => {
     expect(isInterventionRecord({ ...base, status: "solution_questioned" })).toBe(false);
     expect(isInterventionRecord({ ...base, proposal: { ...base.proposal, intervention_type: "workshop" } })).toBe(false);
     expect(isInterventionRecord({ ...base, handoff: { ...base.handoff, human_reviewed_intervention: true } })).toBe(false);
-    expect(isInterventionRecord({ ...base, handoff: { ...base.handoff, training_design_gate: "withheld" } })).toBe(true);
+    expect(isInterventionRecord({ ...base, handoff: { ...base.handoff, training_design_gate: "withheld" } })).toBe(false);
     expect(isInterventionRecord({ ...base, solution_validation: { ...base.solution_validation!, alignment_outcome: "misaligned" } })).toBe(false);
     expect(isInterventionRecord({ ...base, solution_validation: { ...base.solution_validation!, assessed: "diagnosis" } })).toBe(false);
     expect(isInterventionRecord({ ...base, validated_diagnosis: { ...base.validated_diagnosis, hypothesis_id: "hyp_9" } })).toBe(false);
@@ -249,17 +263,17 @@ describe("M5 design summary with the AWS-4 handoff", () => {
   it("names the validated intervention and its solution review without calling it human validated", () => {
     const result = designFixture();
     result.intervention.intervention_type = "practice_simulation";
-    result.intervention.solution_alignment = "partially_aligned";
+    result.intervention.solution_alignment = "aligned";
     result.intervention.intervention_id = "int_1";
     result.intervention.solution_validation_id = "sol_1";
     render(<DesignWorkspace result={result} />);
-    expect(screen.getByText(/Validated intervention: Practice Simulation · solution review Partially Aligned/)).toBeInTheDocument();
+    expect(screen.getByText(/Solution-reviewed intervention: Practice Simulation · solution review Aligned/)).toBeInTheDocument();
     expect(screen.getByText("Not human validated")).toBeInTheDocument();
     expect(screen.getByText(/int_1 → solution review sol_1/)).toBeInTheDocument();
   });
 
   it("renders legacy results without the handoff line", () => {
     render(<DesignWorkspace result={designFixture()} />);
-    expect(screen.queryByText(/Validated intervention:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Solution-reviewed intervention:/)).not.toBeInTheDocument();
   });
 });

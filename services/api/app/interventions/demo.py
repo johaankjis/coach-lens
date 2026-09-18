@@ -9,10 +9,11 @@ from copy import deepcopy
 
 
 RESOLUTION_CRITERION = "Resolution summary clarity"
+PROCESS_CRITERION = "Required follow-up prompt available in workflow"
 
 
 class DemoInterventionFixture:
-    """Fixed intervention proposals for the two synthetic M4 demo signals."""
+    """Fixed intervention proposals for the three synthetic M4 demo signals."""
 
     controlled_fixture = True  # Reported by /diagnostics/mode from the object, not a label.
 
@@ -37,6 +38,18 @@ class DemoInterventionFixture:
                 "evidence_reference_ids": cited[:1],
                 "limitations": ["Synthetic QA evidence may not represent other calls."],
                 "missing_evidence": ["Direct observation of the agent's explanation process."],
+                "provider_reported_confidence": 0.6,
+            }
+        if request["signal"]["criterion"] == PROCESS_CRITERION:
+            return {
+                "intervention_type": "process_correction",
+                "recommendation": "Synthetic proposal: add the required follow-up prompt to the approved workflow and verify that it appears at the right step.",
+                "rationale": "Synthetic fixed text: the validated cause is a missing workflow prompt, so changing the workflow addresses the gap directly; repeating agent training does not add the prompt.",
+                "target_change": "The approved workflow displays the required follow-up prompt before the agent closes the case.",
+                "fit_to_cause": "A process gap requires a process correction; failure frequency alone does not establish a training need.",
+                "evidence_reference_ids": cited[:1],
+                "limitations": ["The fixed diagnosis assumes the workflow audit reflects the current approved version."],
+                "missing_evidence": ["Confirm the prompt appears in the deployed workflow."],
                 "provider_reported_confidence": 0.6,
             }
         return {
@@ -78,6 +91,13 @@ class DemoSolutionFixture:
                     "misaligned_points": [], "unsupported_assumptions": [],
                     "missing_information": ["Direct observation would confirm the skill gap"],
                     "provider_reported_confidence": 0.65}
+        if proposed == "process_correction" and cause == "process_gap":
+            return {"alignment_outcome": "aligned",
+                    "alignment_assessment": "Synthetic fixed review: adding the missing prompt addresses the validated workflow cause; agent training alone would leave the process unchanged.",
+                    "aligned_points": ["The change corrects the validated workflow gap",
+                                       "The target change names the prompt to add"],
+                    "misaligned_points": [], "unsupported_assumptions": [],
+                    "missing_information": [], "provider_reported_confidence": 0.7}
         if proposed == "investigate_further" and cause == "undetermined":
             return {"alignment_outcome": "aligned",
                     "alignment_assessment": "Synthetic fixed review: investigation is the appropriate "
