@@ -27,7 +27,9 @@ def main() -> int:
     import uvicorn
 
     install_results_cx_demo(app, evaluations)
-    print("Mode: REAL RESULTS CX (local data; diagnostic and design providers unavailable)", flush=True)
+    diagnostic_state = ("Bedrock installed; remote invocation privacy-blocked"
+                        if get_settings().bedrock_enabled else "diagnostic provider unavailable")
+    print(f"Mode: REAL RESULTS CX (local data; {diagnostic_state}; design providers unavailable)", flush=True)
     print(f"Loaded {len(evaluations)} evaluations, "
           f"{sum(len(e.criteria) for e in evaluations)} criterion records, "
           f"{len(app.state.diagnostics.signals)} observed signals", flush=True)

@@ -256,8 +256,10 @@ class DiagnosticService:
         bundle = self.evidence(signal_id)
         try:
             raw = await self.reasoner.diagnose(self.provider_evidence(signal_id))
-        except DiagnosticError:
-            raise
+        except DiagnosticError as exc:
+            if isinstance(self.reasoner, UnavailableReasoner) or isinstance(exc, ProviderOutputError):
+                raise
+            raise ProviderOutputError("reasoner_failure", "Reasoning provider failed") from exc
         except Exception as exc:
             raise ProviderOutputError("reasoner_failure", "Reasoning provider failed") from exc
         hypothesis = validate_provider_output(raw, bundle)

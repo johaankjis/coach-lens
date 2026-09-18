@@ -191,7 +191,8 @@ def test_installed_real_mode_http_surface_stops_at_diagnosis(tmp_path, monkeypat
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "not-a-real-key-id")
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "not-a-real-token")
     monkeypatch.setenv("COACHLENS_API_DIAGNOSTIC_PROVIDER", "bedrock")
-    assert set(Settings.model_fields) == {"title", "service_name", "diagnostic_evaluations_path"}
+    assert set(Settings.model_fields) == {"title", "service_name", "diagnostic_evaluations_path",
+                                          "bedrock_enabled", "bedrock_region", "bedrock_model_id"}
     root = tmp_path / "raw"
     generated_sources(root)
     demo.install_results_cx_demo(app_state, demo.load_results_cx_demo(root))
