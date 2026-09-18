@@ -15,9 +15,14 @@ def _parse(model, raw):
     # The recursive reduction matters: a nested pre-built model instance inside a plain
     # mapping would otherwise skip validation and stay shared with the provider.
     try:
-        return model.model_validate(untrusted_payload(raw))
+        parsed = model.model_validate(untrusted_payload(raw))
     except (ValidationError, ValueError, TypeError) as exc:
         raise InvalidDesignOutput("Provider returned an invalid design artifact") from exc
+    if parsed.provider_metadata.generation_mode is not None:
+        # `DesignResult.generation_mode` is service-assigned; the shared metadata field may
+        # not be used by a provider or fixture to describe itself.
+        raise InvalidDesignOutput("Provider may not assert its generation mode")
+    return parsed
 
 
 def _unique(items, attribute, run_id):

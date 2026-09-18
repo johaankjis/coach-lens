@@ -141,6 +141,21 @@ def test_provider_output_cannot_set_generation_mode_or_status():
     assert asyncio.run(design.run("hyp_1")).generation_mode == "controlled_fixture"
 
 
+def test_provider_metadata_generation_mode_cannot_be_asserted_by_design_provider():
+    """The shared `ProviderMetadata.generation_mode` is service-assigned in M3 and unused in M5;
+    a design provider or fixture may not describe itself through it either."""
+    design, fixture, _ = build()
+    context, decision, training = artifacts(design, fixture)
+    for mode in ("provider", "controlled_fixture"):
+        forged_metadata = decision["provider_metadata"] | {"generation_mode": mode}
+        with pytest.raises(InvalidDesignOutput, match="generation mode"):
+            validate_decision(decision | {"provider_metadata": forged_metadata}, context)
+        with pytest.raises(InvalidDesignOutput, match="generation mode"):
+            validate_training(training | {"provider_metadata": forged_metadata}, context)
+    assert validate_decision(decision, context).provider_metadata.generation_mode is None
+    assert asyncio.run(design.run("hyp_1")).generation_mode == "controlled_fixture"
+
+
 def test_provider_metadata_is_required_provenance():
     design, fixture, _ = build()
     context, decision, training = artifacts(design, fixture)

@@ -324,7 +324,13 @@ def test_stored_hypothesis_is_isolated_from_provider_object():
     candidate = DiagnosticHypothesis.model_validate(response(bundle))
     svc = DiagnosticService(source, ControlledTestReasoner(candidate))
     record = asyncio.run(svc.diagnose(signal.signal_id))
-    assert record.provider_hypothesis == candidate and record.provider_hypothesis is not candidate
+    stored = record.provider_hypothesis
+    assert stored is not candidate and stored.provider_metadata is not candidate.provider_metadata
+    # Identical content except the service-stamped generation mode (see `stamp_generation_mode`).
+    assert stored.model_dump(exclude={"provider_metadata": {"generation_mode"}}) == \
+        candidate.model_dump(exclude={"provider_metadata": {"generation_mode"}})
+    assert stored.provider_metadata.generation_mode == "controlled_fixture"
+    assert candidate.provider_metadata.generation_mode is None
     with pytest.raises(ValidationError):
         candidate.explanation = "mutated"  # Frozen value object.
 

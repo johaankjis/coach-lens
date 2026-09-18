@@ -151,6 +151,13 @@ class EvidenceReference(FrozenModel):
 class ProviderMetadata(FrozenModel):
     provider: str = Field(min_length=1, max_length=MAX_ID_LENGTH)
     model: str | None = Field(default=None, max_length=MAX_ID_LENGTH)
+    invocation_region: str | None = Field(default=None, max_length=MAX_ID_LENGTH,
+                                          exclude_if=lambda value: value is None)
+    invocation_id: str | None = Field(default=None, max_length=MAX_ID_LENGTH,
+                                      exclude_if=lambda value: value is None)
+    generated_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    generation_mode: Literal["provider", "controlled_fixture"] | None = Field(
+        default=None, exclude_if=lambda value: value is None)
 
 
 def _require_uncertainty_context(cause_domain: CauseDomain, missing_evidence: list[str], noun: str):

@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 
 from app.design.service import design_provider_kind
 
-from .engine import DiagnosticError, DiagnosticService, ProviderOutputError, provider_kind
+from .engine import (DiagnosticError, DiagnosticService, ProviderOutputError, provider_kind,
+                     remote_invocation_policy)
 from .models import HumanRevision
 
 
@@ -50,12 +51,15 @@ def mode(request: Request):
 
     `mode` is the label the startup path declared. Provider fields and counts are read from
     the installed services, so the label cannot claim a provider that is not really there.
+    `remote_diagnosis` says whether the installed reasoner will send evidence off-process;
+    `diagnostic_provider: provider` alone never means real remote diagnosis is permitted.
     """
     state = request.app.state
     diagnostics: DiagnosticService = state.diagnostics
     designs = state.designs
     return {"mode": state.demo_mode,
             "diagnostic_provider": provider_kind(diagnostics.reasoner),
+            "remote_diagnosis": remote_invocation_policy(diagnostics.reasoner),
             "design_provider": design_provider_kind(designs.intervention, designs.training),
             "evaluation_count": len(diagnostics.evaluations),
             "signal_count": len(diagnostics.signals)}

@@ -3,6 +3,8 @@
 from pathlib import Path
 
 from app.design.service import DesignService, UnavailableDesignProvider
+from app.config import get_settings
+from app.diagnostics.bedrock import BedrockReasoner
 from app.diagnostics.engine import DiagnosticService, UnavailableReasoner
 
 from .models import Domain, Evaluation
@@ -48,12 +50,15 @@ def load_results_cx_demo(raw_dir: Path | str) -> list[Evaluation]:
 
 
 def install_results_cx_demo(app, evaluations: list[Evaluation]) -> None:
-    """Serve M2 records with no diagnostic or design provider, and label the process so.
+    """Serve M2 records with unavailable design providers and truthful diagnostic mode.
 
-    The label and the providers are set together so `/diagnostics/mode` cannot report real
-    mode with a fixture or provider installed. No environment or settings value is consulted.
+    Bedrock may be installed by setting, but its default privacy policy refuses remote
+    invocation with these real records before an AWS client is created.
     """
-    app.state.diagnostics = DiagnosticService(evaluations, UnavailableReasoner())
+    settings = get_settings()
+    reasoner = (BedrockReasoner(settings.bedrock_region, settings.bedrock_model_id)
+                if settings.bedrock_enabled else UnavailableReasoner())
+    app.state.diagnostics = DiagnosticService(evaluations, reasoner)
     unavailable = UnavailableDesignProvider()
     app.state.designs = DesignService(app.state.diagnostics, unavailable, unavailable)
     app.state.demo_mode = REAL_MODE

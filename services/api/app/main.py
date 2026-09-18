@@ -9,6 +9,7 @@ from app.design.service import DesignService, UnavailableDesignProvider
 from app.results_cx.models import Evaluation
 
 from app.config import get_settings
+from app.diagnostics.bedrock import BedrockReasoner
 
 
 class HealthResponse(BaseModel):
@@ -27,7 +28,11 @@ def _local_evaluations() -> list[Evaluation]:
     return [Evaluation.model_validate_json(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-app.state.diagnostics = DiagnosticService(_local_evaluations(), UnavailableReasoner())
+app.state.diagnostics = DiagnosticService(
+    _local_evaluations(),
+    BedrockReasoner(settings.bedrock_region, settings.bedrock_model_id)
+    if settings.bedrock_enabled else UnavailableReasoner(),
+)
 app.state.demo_mode = "local_normalized" if settings.diagnostic_evaluations_path else "unconfigured"
 unavailable_design = UnavailableDesignProvider()
 app.state.designs = DesignService(app.state.diagnostics, unavailable_design, unavailable_design)

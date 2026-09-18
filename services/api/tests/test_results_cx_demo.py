@@ -191,7 +191,8 @@ def test_installed_real_mode_http_surface_stops_at_diagnosis(tmp_path, monkeypat
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "not-a-real-key-id")
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "not-a-real-token")
     monkeypatch.setenv("COACHLENS_API_DIAGNOSTIC_PROVIDER", "bedrock")
-    assert set(Settings.model_fields) == {"title", "service_name", "diagnostic_evaluations_path"}
+    assert set(Settings.model_fields) == {"title", "service_name", "diagnostic_evaluations_path",
+                                          "bedrock_enabled", "bedrock_region", "bedrock_model_id"}
     root = tmp_path / "raw"
     generated_sources(root)
     demo.install_results_cx_demo(app_state, demo.load_results_cx_demo(root))
@@ -200,7 +201,7 @@ def test_installed_real_mode_http_surface_stops_at_diagnosis(tmp_path, monkeypat
     assert isinstance(app_state.state.designs.training, UnavailableDesignProvider)
     client = TestClient(app_state)
     assert client.get("/diagnostics/mode").json() == {
-        "mode": "real_results_cx", "diagnostic_provider": "unavailable",
+        "mode": "real_results_cx", "diagnostic_provider": "unavailable", "remote_diagnosis": "unavailable",
         "design_provider": "unavailable", "evaluation_count": 2, "signal_count": 6}
     signals = client.get("/diagnostics/signals").json()
     assert [s["signal_id"] for s in signals] == [
@@ -231,7 +232,7 @@ def test_mode_endpoint_reports_installed_providers_not_the_label(app_state):
     unavailable = UnavailableDesignProvider()
     app_state.state.designs = DesignService(app_state.state.diagnostics, unavailable, unavailable)
     assert TestClient(app_state).get("/diagnostics/mode").json() == {
-        "mode": "synthetic_demo", "diagnostic_provider": "unavailable",
+        "mode": "synthetic_demo", "diagnostic_provider": "unavailable", "remote_diagnosis": "unavailable",
         "design_provider": "unavailable", "evaluation_count": 0, "signal_count": 0}
     fixture = DemoDesignFixture("sig_none")
     app_state.state.diagnostics = DiagnosticService([], ControlledTestReasoner({}))
@@ -239,6 +240,7 @@ def test_mode_endpoint_reports_installed_providers_not_the_label(app_state):
                                             controlled_fixture=True)
     assert TestClient(app_state).get("/diagnostics/mode").json() == {
         "mode": "synthetic_demo", "diagnostic_provider": "controlled_fixture",
+        "remote_diagnosis": "local_fixture",
         "design_provider": "controlled_fixture", "evaluation_count": 0, "signal_count": 0}
 
     class SomeProvider:
@@ -289,7 +291,7 @@ def test_design_fixture_label_cannot_disagree_with_installed_providers():
 def test_default_app_mode_is_unconfigured_with_no_providers():
     assert app.state.demo_mode == "unconfigured"
     assert TestClient(app).get("/diagnostics/mode").json() == {
-        "mode": "unconfigured", "diagnostic_provider": "unavailable",
+        "mode": "unconfigured", "diagnostic_provider": "unavailable", "remote_diagnosis": "unavailable",
         "design_provider": "unavailable", "evaluation_count": 0, "signal_count": 0}
 
 
