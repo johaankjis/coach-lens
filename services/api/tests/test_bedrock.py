@@ -1,6 +1,7 @@
 """Synthetic-only AWS boundary tests; no network or credentials."""
 
 import asyncio
+from decimal import Decimal
 import json
 import os
 from pathlib import Path
@@ -11,8 +12,10 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.config import Settings
-from app.diagnostics.bedrock import (ITEM_PAYLOAD_KEYS, SIGNAL_PAYLOAD_KEYS, SYSTEM_PROMPT,
-                                     BedrockReasoner, parse_response, provider_safe_payload)
+from app.diagnostics.bedrock import (FIELD_GUIDANCE, ITEM_PAYLOAD_KEYS, REASONING_PROMPT,
+                                     RESPONSE_SHAPE_EXAMPLE, SIGNAL_PAYLOAD_KEYS, SYSTEM_PROMPT,
+                                     BedrockReasoner, BedrockResponse, parse_response,
+                                     provider_safe_payload, response_contract)
 from app.diagnostics.engine import (ControlledTestReasoner, DiagnosticService, ProviderOutputError,
                                     UnavailableReasoner, provider_kind, remote_invocation_policy)
 from app.main import app
@@ -483,3 +486,127 @@ def test_smoke_script_synthetic_path_invokes_with_expected_coverage(monkeypatch)
                                          _env_file=None))
     with pytest.raises(SystemExit, match="refuses a configured local evaluations path"):
         asyncio.run(smoke.main())
+
+
+# --- Output-contract hardening (post live-smoke) -------------------------------------------
+# The first live Sonnet 4.6 smoke returned `missing_evidence` as a bare string and
+# `provider_reported_confidence` as the label "low_to_moderate". Validation refused both and
+# stored nothing, which is correct. These tests pin the prompt that now forbids those shapes
+# and prove the validator was not loosened to accept them.
+
+EXPECTED_PROMPT_TYPES = {
+    "observed_behavioral_defect": "JSON string of 1 to 4000 characters",
+    "cause_domain": 'JSON string, exactly one of "knowledge_gap", "skill_gap", "process_gap", "undetermined"',
+    "performance_dimension": 'JSON string, exactly one of "capability", "execution", "undetermined"',
+    "explanation": "JSON string of 1 to 4000 characters",
+    "supporting_evidence_ids": "JSON array of 1 to 100 JSON strings",
+    "conflicting_evidence_ids": "JSON array of 0 to 100 JSON strings",
+    "missing_evidence": "JSON array of 0 to 100 JSON strings",
+    "provider_reported_confidence": "JSON number from 0 to 1 inclusive",
+}
+
+
+def test_prompt_contract_specifies_every_response_field_type():
+    """Every BedrockResponse field is named in the prompt with its exact JSON type and bounds."""
+    assert set(EXPECTED_PROMPT_TYPES) == set(BedrockResponse.model_fields) == set(FIELD_GUIDANCE)
+    contract = response_contract()
+    assert SYSTEM_PROMPT == REASONING_PROMPT + "\n\n" + contract
+    for name, expected in EXPECTED_PROMPT_TYPES.items():
+        assert f'- "{name}": {expected}. ' in contract, name
+    assert contract.count("\n- ") == len(BedrockResponse.model_fields)
+    assert "exactly these 8 keys, all required, and no other keys" in contract
+    # The two live failures, called out explicitly.
+    assert '- "missing_evidence": JSON array' in contract
+    assert "ALWAYS a JSON array of strings, even when there is exactly one item; use [] when" in contract
+    assert '- "provider_reported_confidence": JSON number' in contract
+    assert "ALWAYS a JSON number literal such as 0.35, never a string" in contract
+    for label in ('"low"', '"moderate"', '"high"', '"low_to_moderate"', '"35%"'):
+        assert label in contract
+    assert "are invalid" in contract
+    # Envelope, enum, evidence, and lineage rules.
+    assert "Return exactly one JSON object and nothing else" in contract
+    assert "no markdown, no code fences, and no prose" in contract
+    assert "Never invent, alter, renumber, or repeat a reference" in contract
+    assert "must not appear in both supporting_evidence_ids and conflicting_evidence_ids" in contract
+    assert "Do not include hypothesis_id, signal_id, provider_metadata, generation_mode, source lineage" in contract
+    assert "Do not add new statistics" in contract
+    assert "discarded without repair" in contract
+    # Coverage semantics and the no-recalculation rule survive in the reasoning half.
+    assert "total_loaded_evaluations is the whole loaded dataset" in SYSTEM_PROMPT
+    assert "Do not recalculate" in SYSTEM_PROMPT and "Do not\nautomatically recommend training" in SYSTEM_PROMPT
+    assert "Cite at least one supplied reference, including SIGNAL-001" in SYSTEM_PROMPT
+
+
+def test_prompt_shape_example_matches_validator():
+    """The illustration is exactly what the validator accepts, so it cannot teach a bad shape."""
+    assert list(RESPONSE_SHAPE_EXAMPLE) == list(BedrockResponse.model_fields)
+    parsed = BedrockResponse.model_validate(RESPONSE_SHAPE_EXAMPLE)
+    assert isinstance(parsed.missing_evidence, list) and len(parsed.missing_evidence) == 1
+    assert isinstance(parsed.provider_reported_confidence, float)
+    last_line = SYSTEM_PROMPT.rsplit("\n", 1)[1]
+    assert json.loads(last_line) == RESPONSE_SHAPE_EXAMPLE
+    assert "```" not in SYSTEM_PROMPT
+    # A shape drift in the validator would surface here rather than in a live call.
+    assert parse_response(last_line, {"SIGNAL-001": ("signal", None), "EVID-001": ("ev_x", "eval_x")})[
+        "provider_reported_confidence"] == 0.25
+
+
+LIVE_SMOKE_SHAPES = {
+    "live_sonnet_both_mismatches": response(missing_evidence="A direct observation of the workflow",
+                                            provider_reported_confidence="low_to_moderate"),
+    "string_missing_evidence": response(missing_evidence="A direct observation of the workflow"),
+    "label_low_to_moderate": response(provider_reported_confidence="low_to_moderate"),
+    "label_low": response(provider_reported_confidence="low"),
+    "label_moderate": response(provider_reported_confidence="moderate"),
+    "label_high": response(provider_reported_confidence="high"),
+    "numeric_string": response(provider_reported_confidence="0.4"),
+    "percentage_string": response(provider_reported_confidence="35%"),
+    "null_missing_evidence": response(missing_evidence=None),
+    "object_missing_evidence": response(missing_evidence={"item": "x"}),
+}
+
+
+@pytest.mark.parametrize("text", LIVE_SMOKE_SHAPES.values(), ids=list(LIVE_SMOKE_SHAPES))
+def test_live_smoke_shapes_still_fail_closed_without_repair_or_fallback(text):
+    runtime = FakeRuntime(text)
+    svc, _, signal_id = service(runtime)
+    with pytest.raises(ProviderOutputError) as refused:
+        asyncio.run(svc.diagnose(signal_id))
+    assert refused.value.code == "invalid_provider_output"
+    assert len(runtime.calls) == 1  # No retry, no repair round-trip.
+    assert svc.list_hypotheses(signal_id) == []
+    assert isinstance(svc.reasoner, BedrockReasoner)  # No fixture fallback.
+    # The request that produced the failure is still the prompt-only Converse call: no
+    # outputConfig / toolConfig was introduced, and the system text is the hardened contract.
+    call = runtime.calls[0]
+    assert set(call) == {"modelId", "system", "messages", "inferenceConfig"}
+    assert call["system"] == [{"text": SYSTEM_PROMPT}]
+    assert "json_schema" not in json.dumps(call["inferenceConfig"])
+    # The HTTP surface stays sanitized and leaks neither the label nor the model text.
+    prior = app.state.diagnostics
+    try:
+        app.state.diagnostics = svc
+        result = TestClient(app).post(f"/diagnostics/signals/{signal_id}/hypotheses")
+    finally:
+        app.state.diagnostics = prior
+    assert result.status_code == 502
+    assert result.json()["detail"] == {"code": "invalid_provider_output",
+                                       "message": "Reasoner returned an invalid hypothesis"}
+    assert "low_to_moderate" not in result.text and "missing_evidence" not in result.text
+    assert len(runtime.calls) == 2 and svc.list_hypotheses(signal_id) == []
+
+
+def test_valid_output_after_hardening_keeps_local_stamping_and_coverage():
+    """A conforming response is stored with locally stamped provenance and unchanged coverage."""
+    svc, runtime, signal_id = service(FakeRuntime(response(missing_evidence=["One item"],
+                                                            provider_reported_confidence=0.35)))
+    record = asyncio.run(svc.diagnose(signal_id))
+    hypothesis = record.provider_hypothesis
+    assert hypothesis.missing_evidence == ["One item"]
+    assert hypothesis.provider_reported_confidence == Decimal("0.35")
+    assert hypothesis.provider_metadata.generation_mode == "provider"  # Stamped by the service.
+    assert "generation_mode" not in SYSTEM_PROMPT.rsplit("\n", 1)[1]  # Never requested from the model.
+    sent = json.loads(runtime.calls[0]["messages"][0]["content"][0]["text"])["signal"]
+    assert (sent["failed_criterion_result_count"], sent["evaluated_criterion_result_count"],
+            sent["evaluations_containing_criterion"], sent["total_loaded_evaluations"]) == (2, 2, 2, 2)
+    assert set(sent) == SIGNAL_PAYLOAD_KEYS

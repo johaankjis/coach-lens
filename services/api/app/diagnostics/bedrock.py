@@ -18,7 +18,7 @@ from .models import (CauseDomain, PerformanceDimension, ProviderEvidenceBundle,
                      StrictModel)
 
 
-SYSTEM_PROMPT = """You propose why a recurring observed QA pattern might be happening.
+REASONING_PROMPT = """You propose why a recurring observed QA pattern might be happening.
 CoachLens supplies deterministic QA facts. Do not recalculate, override, or reinterpret
 source QA pass/fail results. Failure frequency alone does not establish root cause.
 Counts and rates describe only the criterion results that were evaluated;
@@ -30,12 +30,78 @@ Diagnosis is a proposal, not truth. Do not invent evidence or cite anything outs
 supplied evidence references. Distinguish supporting from conflicting evidence, and identify
 missing evidence. Return undetermined when the evidence cannot distinguish causes. Do not
 automatically recommend training. A human validates the diagnosis afterward.
-Use only cause_domain: knowledge_gap, skill_gap, process_gap, undetermined; and
-performance_dimension: capability, execution, undetermined. Return one JSON object with
-exactly: observed_behavioral_defect, cause_domain, performance_dimension, explanation,
-supporting_evidence_ids, conflicting_evidence_ids, missing_evidence,
-provider_reported_confidence. Cite at least one supplied reference, including SIGNAL-001
-when only aggregate evidence supports the observation. No markdown or other text."""
+Cite at least one supplied reference, including SIGNAL-001 when only aggregate evidence
+supports the observation."""
+
+# Meaning of each response field. Types, enums, and bounds are NOT written here: they are
+# rendered from the BedrockResponse JSON schema so the prompt cannot drift from the validator.
+FIELD_GUIDANCE = {
+    "observed_behavioral_defect": "The recurring behavior the deterministic facts show.",
+    "cause_domain": "Use undetermined when the evidence cannot distinguish causes.",
+    "performance_dimension": "Use undetermined when the evidence does not distinguish.",
+    "explanation": "Why the cited evidence supports this proposal.",
+    "supporting_evidence_ids": "Each entry is one supplied reference (SIGNAL-001 or an EVID-### "
+                               "value from evidence_items) copied exactly. Never invent, alter, "
+                               "renumber, or repeat a reference.",
+    "conflicting_evidence_ids": "Same reference rule. A reference must not appear in both "
+                                "supporting_evidence_ids and conflicting_evidence_ids.",
+    "missing_evidence": "Short descriptions of evidence that would distinguish causes. ALWAYS a "
+                        "JSON array of strings, even when there is exactly one item; use [] when "
+                        "nothing is missing. Must be non-empty when cause_domain is undetermined.",
+    "provider_reported_confidence": "ALWAYS a JSON number literal such as 0.35, never a string. "
+                                    "Qualitative labels such as \"low\", \"moderate\", \"high\", "
+                                    "\"low_to_moderate\", and percentages such as \"35%\" are invalid.",
+}
+
+# Shape illustration only: it shows the JSON type of every field, not values to copy.
+RESPONSE_SHAPE_EXAMPLE = {
+    "observed_behavioral_defect": "string", "cause_domain": CauseDomain.UNDETERMINED.value,
+    "performance_dimension": PerformanceDimension.UNDETERMINED.value, "explanation": "string",
+    "supporting_evidence_ids": ["SIGNAL-001", "EVID-001"], "conflicting_evidence_ids": [],
+    "missing_evidence": ["string"], "provider_reported_confidence": 0.25}
+
+
+def _describe_type(prop: dict) -> str:
+    """Render one JSON-schema property as a plain-language type with its bounds."""
+    if "enum" in prop:
+        return "JSON string, exactly one of " + ", ".join(f'"{value}"' for value in prop["enum"])
+    kind = prop["type"]
+    if kind == "string":
+        return f"JSON string of {prop.get('minLength', 0)} to {prop['maxLength']} characters"
+    if kind == "array":
+        return (f"JSON array of {prop.get('minItems', 0)} to {prop['maxItems']} "
+                f"JSON {prop['items']['type']}s")
+    if kind == "number":
+        return f"JSON number from {prop['minimum']} to {prop['maximum']} inclusive"
+    raise TypeError(f"Unsupported response field type: {kind}")
+
+
+def response_contract() -> str:
+    """The exact output contract, rendered from the BedrockResponse schema.
+
+    Anything the schema cannot express (reference rules, the array-even-when-single rule, the
+    number-never-label rule) is stated in FIELD_GUIDANCE. Local validation stays authoritative;
+    this text only tells the model what that validation will accept.
+    """
+    schema = BedrockResponse.model_json_schema()
+    fields = list(schema["properties"])
+    lines = [f"Output contract. Return exactly one JSON object and nothing else: no markdown, no code "
+             f"fences, and no prose, labels, or comments before or after it. The object has exactly "
+             f"these {len(fields)} keys, all required, and no other keys:"]
+    for name in fields:
+        prop = schema["properties"][name]
+        if "$ref" in prop:
+            prop = schema["$defs"][prop["$ref"].rsplit("/", 1)[1]]
+        lines.append(f'- "{name}": {_describe_type(prop)}. {FIELD_GUIDANCE.get(name, "")}'.rstrip())
+    lines.append("Do not include hypothesis_id, signal_id, provider_metadata, generation_mode, source "
+                 "lineage, model or provider names, or any key not listed above. Do not add new "
+                 "statistics: report the supplied counts and rates as given or not at all. An object "
+                 "that violates any rule above is discarded without repair, so a valid object that "
+                 "says undetermined with honest missing_evidence is better than an invalid one.")
+    lines.append("Shape illustration with placeholder values (copy the types, not the values):")
+    lines.append(json.dumps(RESPONSE_SHAPE_EXAMPLE))
+    return "\n".join(lines)
+
 
 PROVIDER_NAME = "Amazon Bedrock"
 
@@ -60,6 +126,9 @@ class BedrockResponse(StrictModel):
     conflicting_evidence_ids: list[str] = Field(max_length=100)
     missing_evidence: list[str] = Field(max_length=100)
     provider_reported_confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+SYSTEM_PROMPT = REASONING_PROMPT + "\n\n" + response_contract()
 
 
 def provider_safe_payload(bundle: ProviderEvidenceBundle) -> tuple[dict, dict[str, tuple[str, str | None]]]:
@@ -108,7 +177,10 @@ def provider_safe_payload(bundle: ProviderEvidenceBundle) -> tuple[dict, dict[st
 def parse_response(text: str, lookup: dict[str, tuple[str, str | None]]) -> dict:
     try:
         raw = json.loads(text)
-        if not isinstance(raw, dict) or isinstance(raw.get("provider_reported_confidence"), bool):
+        # Confidence must arrive as a JSON number. Pydantic's lax mode would otherwise accept
+        # a bool or a numeric string such as "0.4", which the contract tells the model is invalid.
+        confidence = raw.get("provider_reported_confidence") if isinstance(raw, dict) else None
+        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
             raise ValueError("Invalid structured response")
         result = BedrockResponse.model_validate(raw)
     except (ValueError, TypeError, ValidationError) as exc:
