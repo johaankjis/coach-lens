@@ -2057,9 +2057,10 @@ body {
   gap: 3px;
 }
 .sidebar-link {
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  grid-template-areas: "icon label status";
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-areas: "icon label" "icon status";
   column-gap: 12px;
+  row-gap: 0;
   padding: 11px 12px;
   border-radius: 9px;
   color: var(--navy-text);
@@ -2098,9 +2099,14 @@ body {
   white-space: nowrap;
 }
 .sidebar-status {
+  grid-area: status;
+  justify-self: start;
+  margin-top: 4px;
   color: #8ea3cb;
   border-color: #3a5387;
   font-size: 9px;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
   padding: 1px 5px;
 }
 .sidebar-foot {
@@ -2127,12 +2133,12 @@ body {
 
 /* ---- Home canvas ---- */
 .workspace.home {
-  max-width: 1560px;
-  padding: 26px 30px 44px;
+  max-width: 1760px;
+  padding: 20px 26px 44px;
 }
 .home-head {
   align-items: flex-start;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 .home-head h1 {
   font-family: var(--serif);
@@ -2158,7 +2164,7 @@ body {
 /* Metric cards: tinted like the reference, but the value is a truthful state. */
 .summary-grid {
   gap: 14px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 .stat-tile {
   grid-template-columns: 52px minmax(0, 1fr);
@@ -2195,7 +2201,7 @@ body {
   min-width: 0;
 }
 .stat-tile h3 {
-  font-size: 14px;
+  font-size: 14.5px;
   letter-spacing: 0;
   text-transform: none;
   font-weight: 700;
@@ -2206,37 +2212,44 @@ body {
   font-size: 34px;
   line-height: 1;
 }
+/* A workflow state is a short phrase, so it sits between the numeral and the label sizes. */
+.stat-value.state {
+  font-size: 23px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
 .stat-value.muted {
   font-family: var(--serif);
-  font-size: 26px;
+  font-size: 24px;
+  line-height: 1.15;
   color: var(--pending-ink);
 }
 .stat-note {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
 }
 .stat-detail {
-  font-size: 12.5px;
+  font-size: 13.5px;
   line-height: 1.4;
 }
 .stat-source {
   margin-top: 4px;
-  font-size: 10.5px;
+  font-size: 11px;
 }
-.stat-tile.agents { background: #eef3fd; }
-.stat-tile.agents .stat-icon { background: #d9e6fb; color: var(--blue-ink); }
-.stat-tile.priority { background: #fdf0f0; }
-.stat-tile.priority .stat-icon { background: #f8d9d9; color: #b83a3a; }
-.stat-tile.qa { background: #eef8f1; }
-.stat-tile.qa .stat-icon { background: #d3ecda; color: var(--green); }
-.stat-tile.intervention { background: #eff1fb; }
-.stat-tile.intervention .stat-icon { background: #dde2f7; color: #3c4fa8; }
+.stat-tile.evaluations { background: #eef3fd; }
+.stat-tile.evaluations .stat-icon { background: #d9e6fb; color: var(--blue-ink); }
+.stat-tile.criteria { background: #eef8f1; }
+.stat-tile.criteria .stat-icon { background: #d3ecda; color: var(--green); }
+.stat-tile.gap { background: #fdf0f0; }
+.stat-tile.gap .stat-icon { background: #f8d9d9; color: #b83a3a; }
+.stat-tile.workflow { background: #eff1fb; }
+.stat-tile.workflow .stat-icon { background: #dde2f7; color: #3c4fa8; }
 .stat-tile.skeleton { grid-template-columns: 1fr; min-height: 118px; }
 
 /* Three-column hierarchy. */
 .home-grid {
-  grid-template-columns: minmax(250px, 0.82fr) minmax(0, 1.7fr) minmax(240px, 0.8fr);
-  gap: 16px;
+  grid-template-columns: minmax(260px, 0.92fr) minmax(0, 2fr) minmax(250px, 0.92fr);
+  gap: 18px;
   align-items: start;
   margin-bottom: 0;
 }
@@ -2256,7 +2269,7 @@ body {
 }
 .card-sub {
   margin: 3px 0 0;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--muted);
 }
 .text-link {
@@ -2353,12 +2366,12 @@ body {
   border-radius: 999px;
 }
 .gap-rate {
-  font-size: 13px;
+  font-size: 14px;
   text-align: right;
   color: var(--ink);
 }
 .gap-meta {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted);
 }
 .gaps .source-note {
@@ -2435,11 +2448,11 @@ body {
   border-radius: 7px;
 }
 .insight-card .pipeline-name {
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0.08em;
 }
 .insight-card .pipeline-state {
-  font-size: 12px;
+  font-size: 13px;
 }
 .insight-trio {
   display: grid;
@@ -2652,7 +2665,7 @@ body {
   padding: 9px 12px;
   border-radius: 8px;
   background: #f6f8fc;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--muted);
 }
 .evidence-facts b {
@@ -2691,7 +2704,7 @@ body {
 .cite-group ul {
   margin: 6px 0 0;
   padding-left: 16px;
-  font-size: 13px;
+  font-size: 13.5px;
 }
 .cite-group li {
   overflow-wrap: anywhere;
@@ -2717,7 +2730,7 @@ body {
   .topbar { grid-template-columns: 1fr; height: auto; padding: 10px 16px; }
   .topbar-right { display: none; }
   .sidebar { padding: 8px 10px; }
-  .sidebar-link { min-width: auto; grid-template-columns: 22px auto auto; }
+  .sidebar-link { min-width: auto; grid-template-columns: 22px auto; }
   .home-grid { grid-template-columns: 1fr; }
   .evidence-card { grid-column: auto; }
   .evidence-card .cite-groups { grid-template-columns: 1fr; }

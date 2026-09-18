@@ -110,29 +110,71 @@ describe("Home decision dashboard from a typed read-model", () => {
     expect(pipelineStep("Human validated")).toHaveTextContent("Awaiting review");
   });
 
-  it("shows every unsupported metric as Pending with only backend-loaded counts, never an invented number (B)", () => {
+  it("fills the four top metrics from backend counts and the selected signal, never an invented number (B)", () => {
     const { unmount } = render(<CommandCenterView model={buildHomeReadModel(sources())} />);
-    for (const name of ["Agents monitored", "Priority issues", "Overall QA", "Training / intervention"]) {
-      const tile = screen.getByRole("article", { name });
-      expect(tile.querySelector(".stat-value")).toHaveTextContent("Pending");
-      expect(tile).not.toHaveTextContent(/%|from last month|\+\d/);
+    const tile = (name: string) => screen.getByRole("article", { name });
+    expect(screen.getAllByRole("article").map((node) => node.querySelector("h3")?.textContent)).toEqual([
+      "QA Evaluations", "Observed Criteria", "Selected Gap", "Workflow Status",
+    ]);
+    expect(tile("QA Evaluations").querySelector(".stat-value")).toHaveTextContent(/^20$/);
+    expect(within(tile("QA Evaluations")).getByText("Evaluations loaded")).toBeInTheDocument();
+    expect(tile("Observed Criteria").querySelector(".stat-value")).toHaveTextContent(/^3$/);
+    expect(within(tile("Observed Criteria")).getByText("Criteria analyzed")).toBeInTheDocument();
+    expect(tile("Selected Gap").querySelector(".stat-value")).toHaveTextContent("58.3%");
+    expect(within(tile("Selected Gap")).getByText("7 of 12 criterion results failed")).toBeInTheDocument();
+    expect(tile("Workflow Status").querySelector(".stat-value")).toHaveTextContent("Awaiting human validation");
+    for (const name of ["QA Evaluations", "Observed Criteria", "Selected Gap", "Workflow Status"]) {
+      expect(tile(name).querySelector(".stat-value")).not.toHaveTextContent("Pending");
+      expect(tile(name)).not.toHaveTextContent(/from last month|vs\.|\+\d|−\d|↑|↓|trend/i);
     }
-    expect(within(screen.getByRole("article", { name: "Agents monitored" })).getByText("20 QA evaluations loaded")).toBeInTheDocument();
-    expect(within(screen.getByRole("article", { name: "Priority issues" })).getByText(/backend has not classified or prioritized issues/)).toBeInTheDocument();
-    expect(within(screen.getByRole("article", { name: "Training / intervention" })).getByText("Selected insight: awaiting human validation")).toBeInTheDocument();
+    for (const label of ["Agents monitored", "Priority issues", "Overall QA", "Training / intervention", "Highest priority", "Top priority"]) {
+      expect(screen.queryByText(new RegExp(label, "i"))).not.toBeInTheDocument();
+    }
     unmount();
 
-    render(<CommandCenterView model={buildHomeReadModel(sources({ signals: [], priority: null, mode: null }))} />);
+    // Observed only: the Workflow Status card says so rather than implying a diagnosis exists.
+    render(<CommandCenterView model={buildHomeReadModel(sources({ priority: insight({ record: null }) }))} />);
+    expect(tile("Workflow Status").querySelector(".stat-value")).toHaveTextContent("Awaiting diagnosis");
+    expect(within(tile("Workflow Status")).getByText("Observed only · no diagnosis requested")).toBeInTheDocument();
+  });
+
+  it("keeps the top metrics truthful when no data is loaded (B: empty)", () => {
+    render(<CommandCenterView model={buildHomeReadModel(sources({ signals: [], priority: null, mode: { ...realMode, evaluation_count: 0, signal_count: 0 } }))} />);
+    const tile = (name: string) => screen.getByRole("article", { name });
     expect(screen.getByText("No QA signals are loaded.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "No observed criteria yet" })).toBeInTheDocument();
-    for (const name of ["Agents monitored", "Priority issues", "Overall QA", "Training / intervention"]) {
-      const tile = screen.getByRole("article", { name });
-      expect(tile.querySelector(".stat-value")).toHaveTextContent("Pending");
-      expect(tile.querySelector(".stat-note")).toBeNull();
-      expect(tile.querySelector(".stat-detail")).not.toHaveTextContent(/\b\d+ (QA|evaluation|criteria|agent|issue)|\d+%|\d+\.\d/);
+    expect(tile("QA Evaluations").querySelector(".stat-value")).toHaveTextContent(/^0$/);
+    expect(tile("Observed Criteria").querySelector(".stat-value")).toHaveTextContent(/^0$/);
+    expect(tile("Selected Gap").querySelector(".stat-value")).toHaveTextContent("No selected gap");
+    expect(tile("Workflow Status").querySelector(".stat-value")).toHaveTextContent("Awaiting data");
+    for (const name of ["QA Evaluations", "Observed Criteria", "Selected Gap", "Workflow Status"]) {
+      expect(tile(name).querySelector(".stat-value")).toHaveClass("muted");
+      expect(tile(name).querySelector(".stat-detail")).not.toHaveTextContent(/[1-9]\d* (QA|evaluation|criteria|agent|issue)|\d+%|\d+\.\d/);
     }
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Agent Insights" })).toHaveAttribute("href", "/agent-insights");
+  });
+
+  it("reports the evaluation count as Pending, not 0, when the runtime mode could not be read", () => {
+    render(<CommandCenterView model={buildHomeReadModel(sources({ mode: null }))} />);
+    const evaluations = screen.getByRole("article", { name: "QA Evaluations" });
+    expect(evaluations.querySelector(".stat-value")).toHaveTextContent("Pending");
+    expect(within(evaluations).getByText(/loaded count is unknown/)).toBeInTheDocument();
+    // The signal list still came from the backend, so the criteria count is the list length.
+    expect(screen.getByRole("article", { name: "Observed Criteria" }).querySelector(".stat-value")).toHaveTextContent(/^3$/);
+  });
+
+  it("updates the Selected Gap card to the newly selected signal's own counts", () => {
+    const view = render(<CommandCenterView model={buildHomeReadModel(sources())} />);
+    const gap = () => screen.getByRole("article", { name: "Selected Gap" });
+    expect(gap().querySelector(".stat-value")).toHaveTextContent("58.3%");
+    view.rerender(<CommandCenterView model={buildHomeReadModel(sources({ priority: insight({ signal: secondSignal, record: null }) }))} />);
+    expect(gap().querySelector(".stat-value")).toHaveTextContent("25.0%");
+    expect(within(gap()).getByText("3 of 12 criterion results failed")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Awaiting diagnosis");
+    // The loaded counts are dataset-wide and do not change with the selection.
+    expect(screen.getByRole("article", { name: "QA Evaluations" }).querySelector(".stat-value")).toHaveTextContent(/^20$/);
+    expect(screen.getByRole("article", { name: "Observed Criteria" }).querySelector(".stat-value")).toHaveTextContent(/^3$/);
   });
 
   it("offers Approve, Revise, and Reject as buttons on Home while the diagnosis awaits review (C)", () => {
@@ -218,6 +260,7 @@ describe("Home decision dashboard from a typed read-model", () => {
     expect(within(field("Training package")).getByText("Blocked upstream")).toBeInTheDocument();
     expect(within(field("Alignment review")).getByText("Blocked upstream")).toBeInTheDocument();
     expect(within(insightCard()).getByText("Request another hypothesis")).toHaveAttribute("href", "/agent-insights?signal=sig_top");
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Rejected");
   });
 
   it("keeps the AI evidence review separate from the human decision in both directions (L)", () => {
@@ -278,6 +321,13 @@ describe("Home decision dashboard from a typed read-model", () => {
     expect(within(field("Alignment review")).getByText("Not applicable")).toHaveClass("not_applicable");
     expect(within(insightCard()).getByText("Review validated process intervention")).toHaveAttribute("href", "/agent-insights?signal=sig_top");
     expect(screen.queryByText(/withheld|failed training/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Process correction");
+  });
+
+  it("shows a validated investigation recommendation as Investigation required in the Workflow Status card", () => {
+    render(<CommandCenterView model={buildHomeReadModel(sources({ priority: insight({ record: approved, intervention: interventionFixture("investigate_further", "aligned") }) }))} />);
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Investigation required");
+    expect(within(insightCard()).getByText("Review investigation recommendation")).toHaveAttribute("href", "/agent-insights?signal=sig_top");
   });
 
   it("shows a questioned solution as caution with training withheld (N)", () => {
@@ -309,7 +359,7 @@ describe("Home decision dashboard from a typed read-model", () => {
     expect(within(field("Outcome")).getByRole("link", { name: "Open KPI Tracker" })).toHaveAttribute("href", "/kpi-tracker");
     expect(within(field("Outcome")).queryByText(/%/)).not.toBeInTheDocument();
     expect(screen.queryByText(/improve/i)).not.toBeInTheDocument();
-    expect(within(screen.getByRole("article", { name: "Training / intervention" })).getByText("Selected insight: training package generated, alignment pending")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Alignment pending");
   });
 
   it("shows an AWS-6 aligned review as Design aligned, distinct from solution and outcome states (P)", () => {
@@ -330,7 +380,7 @@ describe("Home decision dashboard from a typed read-model", () => {
     expect(pipelineStep("Alignment")).toHaveClass("validated");
     expect(within(insightCard()).getByText("Review aligned training package")).toHaveAttribute("href", "/training?signal=sig_top");
     expect(within(field("Outcome")).getByText("Measurement pending")).toBeInTheDocument();
-    expect(screen.getByText("Selected insight: training package generated, design aligned")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Design aligned");
     expect(screen.queryByText(/outcome validated|improv|effective|has been deployed/i)).not.toBeInTheDocument();
   });
 
@@ -349,7 +399,7 @@ describe("Home decision dashboard from a typed read-model", () => {
     expect(within(insightCard()).getByText("Review alignment concerns")).toHaveAttribute("href", "/agent-insights?signal=sig_top");
     expect(within(field("Solution validation")).getByText(/Solution validated · Aligned/)).toHaveClass("validated");
     expect(within(field("Training package")).getByText("Training generated · not deployed")).toBeInTheDocument();
-    expect(screen.getByText("Selected insight: training package generated, design questioned")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Design questioned");
     expect(screen.queryByText(/rejected/i)).not.toBeInTheDocument();
   });
 
@@ -677,8 +727,15 @@ describe("Home data states and M4 decisions against the backend", () => {
     expect(screen.getByRole("link", { name: "View full evidence in Agent Insights" })).toHaveAttribute("href", "/agent-insights?signal=sig_second");
     expect(within(block("Human validation", "HIPAA verification")).getByText("No diagnosis to validate")).toBeInTheDocument();
     expect(decisionGroup("HIPAA verification")).toBeNull();
+    // The Selected Gap and Workflow Status cards follow the selection; the loaded counts do not.
+    expect(screen.getByRole("article", { name: "Selected Gap" }).querySelector(".stat-value")).toHaveTextContent("25.0%");
+    expect(within(screen.getByRole("article", { name: "Selected Gap" })).getByText("3 of 12 criterion results failed")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Awaiting diagnosis");
+    expect(screen.getByRole("article", { name: "QA Evaluations" }).querySelector(".stat-value")).toHaveTextContent(/^20$/);
     await userEvent.click(screen.getByRole("button", { name: /Resolution clarity/ }));
     expect(await screen.findByText("Design aligned · Aligned")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Selected Gap" }).querySelector(".stat-value")).toHaveTextContent("58.3%");
+    expect(screen.getByRole("article", { name: "Workflow Status" }).querySelector(".stat-value")).toHaveTextContent("Design aligned");
   });
 
   it("removes the previous signal's actions and evidence while another gap loads", async () => {

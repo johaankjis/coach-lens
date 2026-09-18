@@ -78,12 +78,17 @@ export type Provenance = {
   signalCount: number | null;
 };
 
+/**
+ * `available` is a backend value or a state derived from one. `empty` is a truthful placeholder
+ * shown when nothing is loaded or selected. `pending` means the backend did not report the value.
+ */
 export type MetricReading =
   | { state: "available"; value: string; detail: string }
+  | { state: "empty"; value: string; detail: string }
   | { state: "pending"; reason: string; note?: string }
   | { state: "unavailable"; reason: string };
 
-export type SummaryMetricId = "agents" | "priority" | "qa" | "intervention";
+export type SummaryMetricId = "evaluations" | "criteria" | "gap" | "workflow";
 
 export type SummaryMetric = {
   id: SummaryMetricId;
@@ -92,6 +97,25 @@ export type SummaryMetric = {
   source: string;
   reading: MetricReading;
 };
+
+/**
+ * Display label for the Workflow Status card. Each value names a state the pipeline steps
+ * already carry; none implies deployment, effectiveness, or a measured outcome.
+ */
+export type WorkflowStatusLabel =
+  | "Awaiting data"
+  | "Awaiting diagnosis"
+  | "Awaiting human validation"
+  | "Human validated"
+  | "Intervention proposed"
+  | "Investigation required"
+  | "Process correction"
+  | "Solution questioned"
+  | "Training ready to generate"
+  | "Alignment pending"
+  | "Design aligned"
+  | "Design questioned"
+  | "Rejected";
 
 export type PerformanceGap = {
   rank: number;
@@ -979,74 +1003,81 @@ export function buildDownstream(insight: PriorityInsight | null): DownstreamStag
   ];
 }
 
-function interventionTileNote(insight: PriorityInsight | null): string | undefined {
-  if (!insight) return undefined;
-  const { intervention, training, alignment } = insight;
-  if (training.state === "generated")
-    return alignment.state === "design_aligned"
-      ? "Selected insight: training package generated, design aligned"
-      : alignment.state === "design_questioned"
-        ? "Selected insight: training package generated, design questioned"
-        : "Selected insight: training package generated, alignment pending";
-  if (training.state === "withheld") return "Selected insight: solution questioned, training withheld";
-  if (intervention.state === "solution_validated") return `Selected insight: ${intervention.typeLabel.toLowerCase()} solution validated`;
-  if (intervention.state === "solution_questioned") return `Selected insight: ${intervention.typeLabel.toLowerCase()} solution questioned`;
-  if (intervention.state === "proposed") return `Selected insight: ${intervention.typeLabel.toLowerCase()} proposed`;
-  if (intervention.state === "not_started") return "Selected insight: no intervention proposed";
-  return "Selected insight: awaiting human validation";
+/**
+ * The furthest recorded stage of the selected insight, read from the stages the pipeline strip
+ * already shows. This is a projection of existing state, not a second state machine: every
+ * branch names a `humanValidation`, `intervention`, `training`, or `alignment` value.
+ */
+export function workflowStatus(insight: PriorityInsight | null): { label: WorkflowStatusLabel; detail: string } {
+  if (!insight) return { label: "Awaiting data", detail: "No QA signals are loaded" };
+  const { diagnosis, humanValidation, intervention, training, alignment } = insight;
+  if (humanValidation.state === "rejected") return { label: "Rejected", detail: "Diagnosis rejected by the reviewer" };
+  if (alignment.state === "design_aligned") return { label: "Design aligned", detail: "AWS-6 review · not deployed" };
+  if (alignment.state === "design_questioned") return { label: "Design questioned", detail: "AWS-6 review · not deployed" };
+  if (training.state === "generated") return { label: "Alignment pending", detail: "Package generated · AWS-6 review not run" };
+  if (training.state === "permitted") return { label: "Training ready to generate", detail: "Solution validated · no package yet" };
+  if (intervention.state === "solution_questioned" || training.state === "withheld")
+    return { label: "Solution questioned", detail: "AWS-4 review questioned the proposal" };
+  if (intervention.state === "solution_validated")
+    return intervention.decisionType === "investigate"
+      ? { label: "Investigation required", detail: "Validated recommendation · gather more evidence" }
+      : intervention.decisionType === "non_training"
+        ? { label: "Process correction", detail: "Validated non-training intervention" }
+        : { label: "Training ready to generate", detail: "Solution validated · no package yet" };
+  if (intervention.state === "proposed") return { label: "Intervention proposed", detail: "AWS-4 proposal · solution not validated" };
+  if (intervention.state === "not_started") return { label: "Human validated", detail: "Diagnosis approved · no intervention proposed" };
+  if (diagnosis.state === "proposed")
+    return {
+      label: "Awaiting human validation",
+      detail: humanValidation.state === "revised_pending" ? "Human revision awaiting approval" : "Diagnosis proposed · human decision pending",
+    };
+  return { label: "Awaiting diagnosis", detail: "Observed only · no diagnosis requested" };
 }
 
-export function buildSummary(provenance: Provenance, insight: PriorityInsight | null): SummaryMetric[] {
+export function buildSummary(provenance: Provenance, insight: PriorityInsight | null, observedSignalCount: number): SummaryMetric[] {
   const loaded = provenance.evaluationCount;
+  const criteria = provenance.signalCount ?? observedSignalCount;
+  const workflow = workflowStatus(insight);
   return [
     {
-      id: "agents",
-      label: "Agents monitored",
-      source: "M2 agent roster",
-      reading: {
-        state: "pending",
-        reason: "The M2 API does not expose an agent roster.",
-        note:
-          loaded === null
-            ? undefined
-            : `${loaded} QA evaluation${loaded === 1 ? "" : "s"} loaded`,
-      },
+      id: "evaluations",
+      label: "QA Evaluations",
+      source: "M2 loaded evaluations",
+      reading:
+        loaded === null
+          ? { state: "pending", reason: "The runtime mode could not be read, so the loaded count is unknown." }
+          : loaded === 0
+            ? { state: "empty", value: "0", detail: "No evaluations loaded" }
+            : { state: "available", value: String(loaded), detail: "Evaluations loaded" },
     },
     {
-      id: "priority",
-      label: "Priority issues",
-      source: "Priority policy pending",
-      reading: {
-        state: "pending",
-        reason: "The backend has not classified or prioritized issues.",
-        note:
-          provenance.signalCount === null
-            ? undefined
-            : `${provenance.signalCount} observed criteria loaded`,
-      },
+      id: "criteria",
+      label: "Observed Criteria",
+      source: "M2 observed signals",
+      reading:
+        criteria === 0
+          ? { state: "empty", value: "0", detail: "No criteria observed" }
+          : { state: "available", value: String(criteria), detail: "Criteria analyzed" },
     },
     {
-      id: "qa",
-      label: "Overall QA",
-      source: "M2 aggregate scoring",
-      reading: {
-        state: "pending",
-        reason: "The M2 API does not expose an overall QA score.",
-        note:
-          provenance.signalCount === null
-            ? undefined
-            : `${provenance.signalCount} criteria observed`,
-      },
+      id: "gap",
+      label: "Selected Gap",
+      source: "M2 counts for the selected signal",
+      reading: insight
+        ? {
+            state: "available",
+            value: insight.failure.failRateLabel,
+            detail: `${insight.failure.failCount} of ${insight.failure.evaluatedResults} criterion results failed`,
+          }
+        : { state: "empty", value: "No selected gap", detail: "Select an observed criterion" },
     },
     {
-      id: "intervention",
-      label: "Training / intervention",
-      source: "AWS-4 / AWS-5",
-      reading: {
-        state: "pending",
-        reason: "No team-wide intervention or training count is exposed by the backend.",
-        note: interventionTileNote(insight),
-      },
+      id: "workflow",
+      label: "Workflow Status",
+      source: "Selected insight pipeline state",
+      reading: insight
+        ? { state: "available", value: workflow.label, detail: workflow.detail }
+        : { state: "empty", value: workflow.label, detail: workflow.detail },
     },
   ];
 }
@@ -1056,7 +1087,7 @@ export function buildHomeReadModel(sources: HomeSources): HomeReadModel {
   const priority = sources.priority ? buildPriorityInsight(sources.priority) : null;
   return {
     provenance,
-    summary: buildSummary(provenance, priority),
+    summary: buildSummary(provenance, priority, sources.signals.length),
     observedSignalCount: sources.signals.length,
     gaps: sources.signals.slice(0, TOP_GAP_COUNT).map((signal, index) => ({
       rank: index + 1,

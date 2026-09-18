@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadHomeSources } from "../lib/home/load";
-import { buildHomeReadModel, isRuntimeMode, type PipelineStep } from "../lib/home/read-model";
+import { buildHomeReadModel, isRuntimeMode, workflowStatus, type PipelineStep } from "../lib/home/read-model";
 import { designFixture } from "./design-workspace.test-fixture";
 import { interventionFixture } from "./intervention-workspace.test-fixture";
 import {
@@ -41,8 +41,8 @@ describe("Home read-model builder", () => {
       href: "/agent-insights?signal=sig_top",
     });
     expect(model.gaps[0].failRateFraction).toBeCloseTo(0.5833);
-    const priority = model.summary.find((metric) => metric.id === "priority")!;
-    expect(priority.reading).toMatchObject({ state: "pending", reason: expect.stringContaining("not classified") });
+    const gap = model.summary.find((metric) => metric.id === "gap")!;
+    expect(gap.reading).toEqual({ state: "available", value: "58.3%", detail: "7 of 12 criterion results failed" });
   });
 
   it("caps the gap list at five while reporting the full observed count", () => {
@@ -52,13 +52,20 @@ describe("Home read-model builder", () => {
     expect(model.observedSignalCount).toBe(8);
   });
 
-  it("keeps agents monitored, priority issues, overall QA, and the intervention tile pending rather than inventing values", () => {
+  it("fills the four top metrics from backend counts and the selected signal, never an invented value", () => {
     const model = buildHomeReadModel(sources());
+    expect(model.summary.map((metric) => [metric.id, metric.label])).toEqual([
+      ["evaluations", "QA Evaluations"],
+      ["criteria", "Observed Criteria"],
+      ["gap", "Selected Gap"],
+      ["workflow", "Workflow Status"],
+    ]);
     const byId = Object.fromEntries(model.summary.map((metric) => [metric.id, metric.reading]));
-    expect(byId.agents).toMatchObject({ state: "pending", note: "20 QA evaluations loaded" });
-    expect(byId.priority).toMatchObject({ state: "pending" });
-    expect(byId.qa).toMatchObject({ state: "pending", note: "3 criteria observed" });
-    expect(byId.intervention).toMatchObject({ state: "pending", note: "Selected insight: awaiting human validation" });
+    expect(byId.evaluations).toEqual({ state: "available", value: "20", detail: "Evaluations loaded" });
+    expect(byId.criteria).toEqual({ state: "available", value: "3", detail: "Criteria analyzed" });
+    expect(byId.gap).toEqual({ state: "available", value: "58.3%", detail: "7 of 12 criterion results failed" });
+    expect(byId.workflow).toEqual({ state: "available", value: "Awaiting human validation", detail: "Diagnosis proposed · human decision pending" });
+    for (const metric of model.summary) expect(JSON.stringify(metric)).not.toMatch(/trend|delta|last month|agents monitored|priority issues|overall qa/i);
     expect(model.downstream.map((item) => [item.id, item.status])).toEqual([
       ["intervention", "blocked"],
       ["training", "blocked"],
@@ -71,8 +78,12 @@ describe("Home read-model builder", () => {
     const model = buildHomeReadModel(sources({ signals: [], priority: null, mode: { ...realMode, evaluation_count: 0, signal_count: 0 } }));
     expect(model.priority).toBeNull();
     expect(model.gaps).toEqual([]);
-    expect(model.summary.find((metric) => metric.id === "priority")!.reading).toMatchObject({ state: "pending", note: "0 observed criteria loaded" });
-    expect(model.summary.every((metric) => metric.reading.state === "pending")).toBe(true);
+    const byId = Object.fromEntries(model.summary.map((metric) => [metric.id, metric.reading]));
+    expect(byId.evaluations).toEqual({ state: "empty", value: "0", detail: "No evaluations loaded" });
+    expect(byId.criteria).toEqual({ state: "empty", value: "0", detail: "No criteria observed" });
+    expect(byId.gap).toEqual({ state: "empty", value: "No selected gap", detail: "Select an observed criterion" });
+    expect(byId.workflow).toEqual({ state: "empty", value: "Awaiting data", detail: "No QA signals are loaded" });
+    expect(model.summary.every((metric) => metric.reading.state === "empty")).toBe(true);
     expect(stage(model, "outcome").status).toBe("pending_backend");
   });
 
@@ -186,7 +197,7 @@ describe("Home read-model builder", () => {
     expect(selected.nextStep).toMatchObject({ label: "Validate solution", href: "/agent-insights?signal=sig_top" });
     expect(steps(selected.pipeline)).toMatchObject({ intervention_proposed: "proposed:Training", solution_validated: "pending:Awaiting validation", training_generated: "neutral:Awaiting solution" });
     expect(stage(model, "intervention")).toMatchObject({ status: "proposed", hrefLabel: "Validate solution" });
-    expect(model.summary.find((metric) => metric.id === "intervention")!.reading).toMatchObject({ note: "Selected insight: training proposed" });
+    expect(model.summary.find((metric) => metric.id === "workflow")!.reading).toMatchObject({ value: "Intervention proposed" });
   });
 
   it("shows an aligned training intervention as permitted but not generated (H)", () => {
@@ -259,7 +270,7 @@ describe("Home read-model builder", () => {
     expect(stage(model, "training")).toMatchObject({ status: "generated", hrefLabel: "Open training package", href: "/training?signal=sig_top", detail: expect.stringContaining("not deployed") });
     expect(stage(model, "alignment")).toMatchObject({ status: "pending", hrefLabel: "Review training alignment", href: "/agent-insights?signal=sig_top" });
     expect(stage(model, "outcome")).toMatchObject({ status: "pending_backend", href: "/kpi-tracker" });
-    expect(model.summary.find((metric) => metric.id === "intervention")!.reading).toMatchObject({ state: "pending", note: "Selected insight: training package generated, alignment pending" });
+    expect(model.summary.find((metric) => metric.id === "workflow")!.reading).toMatchObject({ state: "available", value: "Alignment pending", detail: expect.stringContaining("AWS-6 review not run") });
     const fixture = buildHomeReadModel(sources({ priority: insight({ record: approved, intervention: interventionFixture("training", "aligned", { fixture: true }), design: designFixture("training") }) })).priority!;
     expect(fixture.training).toMatchObject({ state: "generated", origin: "fixture", knowledgeCheckCount: 0, missingOperationalDetailCount: 0 });
     expect(fixture.intervention).toMatchObject({ origin: "fixture" });
@@ -313,7 +324,7 @@ describe("Home read-model builder", () => {
       expect(selected.nextStep.detail).not.toMatch(/deploy(ed|ment) (is|has)|improve/i);
       expect(stage(model, "alignment")).toMatchObject({ status: "design_aligned", hrefLabel: "Review aligned training package", href: "/training?signal=sig_top", detail: expect.stringContaining("not a human decision") });
       expect(stage(model, "outcome")).toMatchObject({ status: "pending_backend", detail: expect.stringContaining("Outcome measurement pending") });
-      expect(model.summary.find((metric) => metric.id === "intervention")!.reading).toMatchObject({ note: "Selected insight: training package generated, design aligned" });
+      expect(model.summary.find((metric) => metric.id === "workflow")!.reading).toMatchObject({ value: "Design aligned", detail: expect.stringContaining("not deployed") });
     });
 
     it.each([
@@ -331,7 +342,7 @@ describe("Home read-model builder", () => {
       expect(steps(selected.pipeline)).toMatchObject({ human_validated: "validated:Approved", solution_validated: "validated:Validated" });
       expect(selected.training.state).toBe("generated");
       expect(stage(model, "outcome").status).toBe("pending_backend");
-      expect(model.summary.find((metric) => metric.id === "intervention")!.reading).toMatchObject({ note: "Selected insight: training package generated, design questioned" });
+      expect(model.summary.find((metric) => metric.id === "workflow")!.reading).toMatchObject({ value: "Design questioned", detail: expect.stringContaining("not deployed") });
     });
 
     it("ignores a review for another design run, diagnosis, proposal, or solution validation (test 6)", () => {
@@ -388,6 +399,39 @@ describe("Home read-model builder", () => {
     const process = buildHomeReadModel(sources({ priority: insight({ record: approved, intervention: interventionFixture("process_correction", "aligned"), design }) })).priority!;
     expect(process.training.state).toBe("not_applicable");
     expect(process.alignment.state).toBe("not_applicable");
+  });
+
+  describe("Workflow Status card", () => {
+    const status = (overrides: Partial<ReturnType<typeof insight>>) =>
+      buildHomeReadModel(sources({ priority: insight(overrides) })).summary.find((metric) => metric.id === "workflow")!.reading;
+
+    it("names the furthest recorded stage of the selected insight without implying anything downstream", () => {
+      expect(status({ record: null })).toMatchObject({ value: "Awaiting diagnosis", detail: "Observed only · no diagnosis requested" });
+      expect(status({ record: awaiting })).toMatchObject({ value: "Awaiting human validation" });
+      expect(status({ record: awaiting, validation: validatedReview })).toMatchObject({ value: "Awaiting human validation" });
+      expect(status({ record: revisedPending })).toMatchObject({ value: "Awaiting human validation", detail: "Human revision awaiting approval" });
+      expect(status({ record: approved })).toMatchObject({ value: "Human validated", detail: expect.stringContaining("no intervention proposed") });
+      expect(status({ record: revisedApproved })).toMatchObject({ value: "Human validated" });
+      expect(status({ record: approved, intervention: interventionFixture("training", null) })).toMatchObject({ value: "Intervention proposed" });
+      expect(status({ record: approved, intervention: interventionFixture("investigate_further", "aligned") })).toMatchObject({ value: "Investigation required" });
+      expect(status({ record: approved, intervention: interventionFixture("process_correction", "aligned") })).toMatchObject({ value: "Process correction" });
+      expect(status({ record: approved, intervention: interventionFixture("training", "misaligned") })).toMatchObject({ value: "Solution questioned" });
+      expect(status({ record: approved, intervention: interventionFixture("training", "aligned") })).toMatchObject({ value: "Training ready to generate" });
+      expect(status({ record: approved, intervention: interventionFixture("practice_simulation", "aligned"), design: providerPackage() })).toMatchObject({ value: "Alignment pending" });
+      expect(status({ record: approved, intervention: interventionFixture("practice_simulation", "aligned"), design: providerPackage(), alignment: alignmentReviewFixture("aligned") })).toMatchObject({ value: "Design aligned" });
+      expect(status({ record: approved, intervention: interventionFixture("practice_simulation", "aligned"), design: providerPackage(), alignment: alignmentReviewFixture("misaligned") })).toMatchObject({ value: "Design questioned" });
+      expect(status({ record: rejected })).toMatchObject({ value: "Rejected", detail: "Diagnosis rejected by the reviewer" });
+      expect(workflowStatus(null)).toEqual({ label: "Awaiting data", detail: "No QA signals are loaded" });
+    });
+
+    it("never claims deployment, effectiveness, or a measured outcome", () => {
+      const labels = [
+        status({ record: null }), status({ record: awaiting }), status({ record: approved }),
+        status({ record: approved, intervention: interventionFixture("practice_simulation", "aligned"), design: providerPackage(), alignment: alignmentReviewFixture("aligned") }),
+        status({ record: rejected }),
+      ];
+      for (const reading of labels) expect(JSON.stringify(reading)).not.toMatch(/(is|has been|was) deployed|effective|improv|outcome validated/i);
+    });
   });
 
   it("validates the runtime mode shape with and without the AWS-4 provider fields", () => {
