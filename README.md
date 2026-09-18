@@ -6,7 +6,7 @@ CoachLens AI is an evidence-driven performance diagnosis and training platform f
 
 | Path | Purpose |
 | --- | --- |
-| `apps/web` | Next.js diagnostic review workspace |
+| `apps/web` | Next.js product shell: Home command center and the Agent Insights review workspace |
 | `services/api` | FastAPI service with health and diagnostic endpoints |
 | `packages/contracts` | Reserved for future shared contracts |
 | `data/raw` | Local supplied datasets; Git ignores everything under `data/` except the `.gitkeep` markers |
@@ -67,6 +67,10 @@ services/api/.venv/bin/python scripts/normalize_results_cx_data.py --input data/
 Profiling prints aggregates only. Normalization writes confidential row-level JSONL to ignored `data/processed/evaluations.jsonl` and prints domain totals. See [the M2 data guide](docs/results-cx-data-foundation.md) for schema, identity, lineage, analytics definitions, and limits.
 
 See [product spec](docs/product-spec.md) and [architecture](docs/architecture.md) for the intended later system.
+
+## UI-1 Home / Command Center
+
+The frontend opens on a Home command center (`/`) that summarizes observed QA gaps, the priority insight under review, its AWS-3 evidence review and human-validation status, and typed pending slots for later intervention, training, alignment, and outcome milestones. Its **Review Evidence & Validate** action routes into the unchanged review workspace at `/agent-insights?signal=<id>` (Agent Insights). Training, Role-Play, KPI Tracker, Reports, and Resources are planned pages with no controls or figures. Home computes no QA statistics; see [the UI-1 guide](docs/ui1-command-center.md) for the read-model and wiring points.
 
 ## M5 design flow and M4 review workspace
 

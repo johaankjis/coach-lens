@@ -1,6 +1,6 @@
-# CoachLens Review Workspace
+# CoachLens web app
 
-This is the Milestone 4 Next.js review workspace. It reads real M2/M3 API contracts and lets a human review diagnostic hypotheses.
+This is the Next.js product shell: the UI-1 Home command center at `/` and the Milestone 4 review workspace at `/agent-insights` (Agent Insights). Both read real M2/M3 API contracts; the workspace lets a human review diagnostic hypotheses. See [the UI-1 guide](../../docs/ui1-command-center.md) for the Home read-model.
 
 ```bash
 npm ci
