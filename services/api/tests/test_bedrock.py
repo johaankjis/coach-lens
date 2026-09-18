@@ -413,13 +413,21 @@ def test_reasoner_authored_error_text_never_reaches_clients():
 def test_real_mode_with_bedrock_installed_blocks_before_aws(monkeypatch):
     settings = Settings(bedrock_enabled=True, _env_file=None)
     monkeypatch.setattr(demo, "get_settings", lambda: settings)
-    prior = (app.state.diagnostics, app.state.designs, app.state.demo_mode)
+    prior = (app.state.diagnostics, app.state.evidence_validations, app.state.interventions,
+             app.state.designs, app.state.demo_mode)
     try:
         demo.install_results_cx_demo(app, evaluations())
         assert isinstance(app.state.diagnostics.reasoner, BedrockReasoner)
+        from app.design.bedrock import BedrockTrainingDesigner
+        from app.interventions.handoff import ValidatedInterventionHandoff
+        assert isinstance(app.state.designs.intervention, ValidatedInterventionHandoff)
+        assert app.state.designs.intervention.interventions is app.state.interventions
+        assert isinstance(app.state.designs.training, BedrockTrainingDesigner)
+        assert app.state.designs.training._diagnostics is app.state.diagnostics
         mode = TestClient(app).get("/diagnostics/mode").json()
-        # AWS-4 installs Bedrock intervention providers behind the same switch; the M5 step
-        # that reads their record is therefore a provider, while the training designer is not.
+        # AWS-4 installs Bedrock intervention providers and AWS-5 the Bedrock training designer
+        # behind the same switch, so every design-side field is a provider. Remote diagnosis
+        # stays privacy-blocked for a plain list, so nothing downstream can ever be reached.
         assert mode == {"mode": "real_results_cx", "diagnostic_provider": "provider",
                         "remote_diagnosis": "privacy_blocked", "design_provider": "provider",
                         "intervention_provider": "provider", "solution_validator": "provider",
@@ -433,7 +441,8 @@ def test_real_mode_with_bedrock_installed_blocks_before_aws(monkeypatch):
         assert runtime.calls == []
         assert TestClient(app).get(f"/diagnostics/signals/{signal_id}/hypotheses").json() == []
     finally:
-        app.state.diagnostics, app.state.designs, app.state.demo_mode = prior
+        (app.state.diagnostics, app.state.evidence_validations, app.state.interventions,
+         app.state.designs, app.state.demo_mode) = prior
 
 
 def test_unavailable_mode_unchanged():

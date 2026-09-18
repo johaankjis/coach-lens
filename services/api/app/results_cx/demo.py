@@ -2,18 +2,11 @@
 
 from pathlib import Path
 
-from app.design.service import DesignService, UnavailableDesignProvider
 from app.config import get_settings
 from app.diagnostics.bedrock import BedrockReasoner
 from app.diagnostics.engine import DiagnosticService, UnavailableReasoner
-from app.diagnostics.evidence_validator import (BedrockEvidenceValidator,
-                                                 EvidenceValidationService,
-                                                 UnavailableEvidenceValidator)
 from app.diagnostics.evidence_policy import population_digest
-from app.interventions.bedrock import BedrockInterventionReasoner, BedrockSolutionValidator
-from app.interventions.handoff import ValidatedInterventionHandoff
-from app.interventions.service import (InterventionService, UnavailableInterventionReasoner,
-                                       UnavailableSolutionValidator)
+from app.pipeline import install_pipeline
 
 from .models import Domain, Evaluation
 from .pipeline import PipelineValidationError, discover_sources, normalize
@@ -94,10 +87,14 @@ def load_results_cx_demo(raw_dir: Path | str) -> list[Evaluation]:
 
 
 def install_results_cx_demo(app, evaluations: list[Evaluation]) -> None:
-    """Serve M2 records with unavailable design providers and truthful diagnostic mode.
+    """Serve M2 records with a truthful diagnostic mode and one consistent downstream graph.
 
     Only the strict loader's provenance object enables AWS-2 preparation when configured.
-    A plain list keeps the Bedrock privacy block.
+    A plain list keeps the Bedrock privacy block. Every downstream service (AWS-3 validator,
+    AWS-4 intervention service, M5 design service with the AWS-4 handoff and, behind the
+    Bedrock flag, the AWS-5 designer) is rebuilt against the *installed* diagnostic service,
+    never the one `app.main` built at import time. No fixture intervention or design
+    decision is ever installed in this mode.
     """
     settings = get_settings()
     if settings.bedrock_enabled and type(evaluations) is TrustedResultsCXEvaluations:
@@ -106,21 +103,5 @@ def install_results_cx_demo(app, evaluations: list[Evaluation]) -> None:
     else:
         reasoner = (BedrockReasoner(settings.bedrock_region, settings.bedrock_model_id)
                     if settings.bedrock_enabled else UnavailableReasoner())
-    app.state.diagnostics = DiagnosticService(evaluations, reasoner)
-    # The AWS-3 validator must review the *installed* service's hypotheses, not the one
-    # `app.main` built at import time, or every real-demo validation would be "not found".
-    app.state.evidence_validations = EvidenceValidationService(
-        app.state.diagnostics,
-        BedrockEvidenceValidator(settings.bedrock_region, settings.bedrock_model_id)
-        if settings.bedrock_enabled else UnavailableEvidenceValidator())
-    # AWS-4 follows the same switch and the same trusted-population gate as AWS-3; M5 reads
-    # its record. The training designer stays unavailable in this demo.
-    app.state.interventions = InterventionService(
-        app.state.diagnostics, app.state.evidence_validations,
-        BedrockInterventionReasoner(settings.bedrock_region, settings.bedrock_model_id)
-        if settings.bedrock_enabled else UnavailableInterventionReasoner(),
-        BedrockSolutionValidator(settings.bedrock_region, settings.bedrock_model_id)
-        if settings.bedrock_enabled else UnavailableSolutionValidator())
-    app.state.designs = DesignService(app.state.diagnostics, ValidatedInterventionHandoff(app.state.interventions),
-                                      UnavailableDesignProvider())
+    install_pipeline(app, DiagnosticService(evaluations, reasoner), settings)
     app.state.demo_mode = REAL_MODE

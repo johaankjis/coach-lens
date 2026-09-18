@@ -703,16 +703,29 @@ def test_m5_decision_contract_extension_is_backward_compatible_and_consistent():
     context = design_service(service, signal)._context("hyp_1")
     decision = decision_from_record(record, context)
     legacy = {k: v for k, v in decision.items() if k not in (
-        "intervention_type", "target_change", "solution_alignment", "intervention_id", "solution_validation_id")}
+        "intervention_type", "recommendation", "target_change", "solution_alignment", "intervention_id",
+        "solution_validation_id", "training_design_gate")}
     parsed = validate_decision(legacy, context)
     assert parsed.intervention_type is None and parsed.solution_alignment is None
+    assert parsed.training_design_gate is None and parsed.recommendation is None
     for mismatch in ({"decision_type": "non_training"}, {"intervention_type": "coaching"},
-                     {"intervention_type": "investigate_further"}):
+                     {"intervention_type": "investigate_further"},
+                     # The gate is a projection of type and outcome; it cannot claim otherwise.
+                     {"training_design_gate": "withheld"}, {"training_design_gate": "not_applicable"},
+                     {"training_design_gate": "awaiting_solution_validation"},
+                     {"solution_alignment": "misaligned"},  # `permitted` gate with a questioned outcome.
+                     {"intervention_type": "coaching", "decision_type": "non_training"}):
         with pytest.raises(ValidationError, match="disagree"):
             InterventionDecision.model_validate(decision | mismatch)
     with pytest.raises(ValidationError):
         InterventionDecision.model_validate(decision | {"solution_alignment": "approved"})
-    assert InterventionDecision.model_validate(decision).intervention_type == "training"
+    with pytest.raises(ValidationError, match="travel together"):
+        InterventionDecision.model_validate(decision | {"solution_validation_id": None})
+    with pytest.raises(ValidationError, match="requires an intervention type"):
+        InterventionDecision.model_validate(legacy | {"training_design_gate": "permitted"})
+    validated = InterventionDecision.model_validate(decision)
+    assert validated.intervention_type == "training" and validated.training_design_gate == "permitted"
+    assert validated.recommendation == record.proposal.recommendation
 
 
 def test_handoff_gate_is_a_lifecycle_projection():

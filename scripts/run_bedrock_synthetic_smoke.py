@@ -1,8 +1,11 @@
-"""Invoke AWS-1, AWS-3, and AWS-4 with synthetic QA only. Uses the normal AWS credential chain.
+"""Invoke AWS-1, AWS-3, AWS-4, and AWS-5 with synthetic QA only. Uses the normal AWS credential chain.
 
 After the AWS-3 review the script records a synthetic human approval (reviewer "smoke") so the
-AWS-4 Intervention Reasoner and Solution Validator can run on the approved diagnosis. Pass
-`--skip-intervention` to stop after AWS-3.
+AWS-4 Intervention Reasoner and Solution Validator can run on the approved diagnosis. It then
+runs the real M5 design service with the AWS-4 handoff: the AWS-5 Bedrock Training Designer
+is invoked only if the live reasoner proposed a training or practice intervention that the
+live solution review found aligned; otherwise the run reports the withheld or non-training
+outcome. Pass `--skip-intervention` to stop after AWS-3, or `--skip-design` after AWS-4.
 """
 
 import argparse
@@ -16,12 +19,15 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services" / "api"))
 
 from app.config import get_settings  # noqa: E402
+from app.design.bedrock import BedrockTrainingDesigner  # noqa: E402
+from app.design.service import DesignError, DesignService  # noqa: E402
 from app.diagnostics.bedrock import BedrockReasoner  # noqa: E402
 from app.diagnostics.engine import DiagnosticService  # noqa: E402
 from app.diagnostics.engine import ProviderOutputError  # noqa: E402
 from app.diagnostics.evidence_validator import BedrockEvidenceValidator, EvidenceValidationService  # noqa: E402
 from app.interventions.bedrock import (BedrockInterventionReasoner, BedrockSolutionValidator,  # noqa: E402
                                        InterventionError)
+from app.interventions.handoff import ValidatedInterventionHandoff  # noqa: E402
 from app.interventions.service import InterventionService  # noqa: E402
 from app.results_cx.models import CriterionResult, Domain, Evaluation, SourceLineage  # noqa: E402
 
@@ -40,7 +46,7 @@ def synthetic_evaluations():
     return evaluations
 
 
-async def main(skip_intervention: bool = False):
+async def main(skip_intervention: bool = False, skip_design: bool = False):
     settings = get_settings()
     if settings.diagnostic_evaluations_path is not None:
         raise SystemExit("Synthetic smoke refuses a configured local evaluations path")
@@ -128,9 +134,44 @@ async def main(skip_intervention: bool = False):
            "training_design_gate": validated.handoff.training_design_gate,
            "m5_decision_type": validated.handoff.decision_type.value,
            "diagnosis_status_after_aws4": service.get(hypothesis.hypothesis_id).status})
+    if skip_design:
+        return
+    # AWS-5: the real design service reads the AWS-4 record through the handoff. The designer
+    # is a separate Converse call that happens only for a permitted training or practice
+    # intervention; withheld and questioned outcomes stop here with a fixed code.
+    design_diagnostics = []
+    designs = DesignService(service, ValidatedInterventionHandoff(interventions),
+                            BedrockTrainingDesigner(settings.bedrock_region, settings.bedrock_model_id,
+                                                    diagnostics=service, diagnostic_sink=design_diagnostics.append))
+    try:
+        result = await designs.run(hypothesis.hypothesis_id)
+    except DesignError as exc:
+        if design_diagnostics:
+            print({"designer_response_diagnostic": design_diagnostics[-1]})
+        print({"design_outcome": exc.code, "message": str(exc)})
+        return
+    summary = {"design_status": result.status, "generation_mode": result.generation_mode,
+               "intervention_type": result.intervention.intervention_type,
+               "training_design_gate": result.intervention.training_design_gate,
+               "training_package": result.training_design is not None}
+    if result.training_design is not None:
+        design = result.training_design
+        summary |= {"provider": design.provider_metadata.provider, "model": design.provider_metadata.model,
+                    "validation_source": design.design_basis.intervention.validation_source,
+                    "intervention_id_matches": design.design_basis.intervention.intervention_id == validated.proposal.intervention_id,
+                    "training_focus": design.design_basis.intervention.training_focus.value,
+                    "target_behaviors": len(design.target_behaviors), "objectives": len(design.objectives),
+                    "knowledge_checks": len(design.decision_checks),
+                    "practice_turns": sum(len(s.beats) for s in design.practice_scenarios),
+                    "rubric_criteria": sum(len(s.rubric) for s in design.practice_scenarios),
+                    "missing_operational_details": len(design.missing_operational_details),
+                    "alignment_links": len(result.alignment_trace.links)}
+    print(summary)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Synthetic Bedrock smoke for AWS-1, AWS-3, and AWS-4")
+    parser = argparse.ArgumentParser(description="Synthetic Bedrock smoke for AWS-1, AWS-3, AWS-4, and AWS-5")
     parser.add_argument("--skip-intervention", action="store_true", help="Stop after the AWS-3 review")
-    asyncio.run(main(parser.parse_args().skip_intervention))
+    parser.add_argument("--skip-design", action="store_true", help="Stop after the AWS-4 solution review")
+    arguments = parser.parse_args()
+    asyncio.run(main(arguments.skip_intervention, arguments.skip_design))

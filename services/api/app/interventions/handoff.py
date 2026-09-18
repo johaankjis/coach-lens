@@ -9,7 +9,7 @@ process correction, and investigation proposals become non-training or investiga
 and never reach the training generator.
 """
 
-from app.design.models import DesignInput
+from app.design.models import AWS4_VALIDATION_SOURCE, DesignInput
 from app.design.service import DesignError
 
 from .bedrock import InterventionError
@@ -40,10 +40,12 @@ def decision_from_record(record: InterventionRecord, context: DesignInput) -> di
         "run_id": run, "diagnosis_id": context.approved.hypothesis_id,
         "decision_type": record.handoff.decision_type.value,
         "intervention_type": proposal.intervention_type.value,
+        "recommendation": proposal.recommendation,
         "target_change": proposal.target_change,
         "solution_alignment": validation.alignment_outcome.value if validation else None,
         "intervention_id": proposal.intervention_id,
         "solution_validation_id": validation.solution_validation_id if validation else None,
+        "training_design_gate": record.handoff.training_design_gate,
         "rationale": proposal.rationale,
         "evidence_refs": [ref.model_dump() for ref in proposal.evidence_refs],
         "risks": list(proposal.limitations),
@@ -59,6 +61,10 @@ def decision_from_record(record: InterventionRecord, context: DesignInput) -> di
 
 class ValidatedInterventionHandoff:
     """M5 intervention step backed by the AWS-4 record instead of a fresh provider decision."""
+
+    # Declared on the object, like `controlled_fixture`: `DesignService` only lets a real
+    # training designer run when its decision came through this handoff.
+    validation_source = AWS4_VALIDATION_SOURCE
 
     def __init__(self, interventions: InterventionService):
         self.interventions = interventions
