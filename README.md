@@ -6,7 +6,7 @@ CoachLens AI is an evidence-driven performance diagnosis and training platform f
 
 | Path | Purpose |
 | --- | --- |
-| `apps/web` | Next.js diagnostic review workspace |
+| `apps/web` | Next.js product shell: Home command center and the Agent Insights review workspace |
 | `services/api` | FastAPI service with health and diagnostic endpoints |
 | `packages/contracts` | Reserved for future shared contracts |
 | `data/raw` | Local supplied datasets; Git ignores everything under `data/` except the `.gitkeep` markers |
@@ -67,6 +67,10 @@ services/api/.venv/bin/python scripts/normalize_results_cx_data.py --input data/
 Profiling prints aggregates only. Normalization writes confidential row-level JSONL to ignored `data/processed/evaluations.jsonl` and prints domain totals. See [the M2 data guide](docs/results-cx-data-foundation.md) for schema, identity, lineage, analytics definitions, and limits.
 
 See [product spec](docs/product-spec.md) and [architecture](docs/architecture.md) for the intended later system.
+
+## Home / Command Center
+
+The frontend opens on a Home command center (`/`) that summarizes observed QA criteria, the first signal in the backend's failure-count order, its AWS-3 evidence review, human-validation status, AWS-4 intervention and solution-validation state, AWS-5 training package state, and the AWS-6 alignment review state (pending, design aligned, or design questioned). The pipeline strip reads Observed → Diagnosed → Evidence reviewed → Human validated → Intervention proposed → Solution validated → Training generated → Alignment from real backend state; a process correction shows training as not applicable, and a questioned solution shows training as withheld. One context-sensitive next step routes to Agent Insights (`/agent-insights?signal=<id>`), including for Check Alignment and for alignment concerns, or, once a package is design aligned, to Training. Signal ordering does not establish priority or severity; Priority issues, Agents monitored, and Overall QA remain pending. **Training** and **Role-Play** display the generated AWS-5 package and its facilitator practice script for one signal; **KPI Tracker** states that outcome measurement is pending over the M2 baseline; Reports and Resources are planned pages. Home computes no QA statistics; see [the command center guide](docs/ui1-command-center.md) for the read-model and the AWS-6 stale-review rules.
 
 ## M5 design flow and M4 review workspace
 

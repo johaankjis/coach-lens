@@ -168,6 +168,8 @@ export default function DesignWorkspace({
   onCheckAlignment,
   checkingAlignment = false,
   alignmentDisabled = false,
+  hidePractice = false,
+  hideAlignmentDetail = false,
 }: {
   result: DesignResult;
   signalLabel?: string;
@@ -176,6 +178,10 @@ export default function DesignWorkspace({
   onCheckAlignment?: () => void;
   checkingAlignment?: boolean;
   alignmentDisabled?: boolean;
+  /** The Training page shows practice on the Role-Play page instead; Agent Insights keeps it inline. */
+  hidePractice?: boolean;
+  /** The Training page shows a concise review summary of its own; the hero status still reflects the review. */
+  hideAlignmentDetail?: boolean;
 }) {
   const decision = result.intervention;
   const d = result.training_design;
@@ -424,7 +430,7 @@ export default function DesignWorkspace({
               ))}
             </section>
           )}
-          <section className="design-section">
+          {!hidePractice && <section className="design-section">
             <span className="eyebrow">Hands-on practice</span>
             <h3>The practice CoachLens proposed</h3>
             {d.practice_scenarios.map((s) => (
@@ -543,7 +549,7 @@ export default function DesignWorkspace({
                 </div>
               </article>
             ))}
-          </section>
+          </section>}
         </>
       )}
       {d && !review && onCheckAlignment && (
@@ -561,7 +567,7 @@ export default function DesignWorkspace({
           {checkingAlignment && <p role="status">Reviewing design alignment…</p>}
         </section>
       )}
-      {review && <AlignmentCheck review={review} />}
+      {review && !hideAlignmentDetail && <AlignmentCheck review={review} />}
       <section className="design-section next-actions">
         <span className="eyebrow">
           {d ? "Next review step" : "Recommended next action"}

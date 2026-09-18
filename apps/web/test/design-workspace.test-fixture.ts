@@ -5,7 +5,7 @@ export function designFixture(kind: "training" | "non_training" | "investigate" 
   return {
     run_id: run, diagnosis_id: "hyp_1", generation_mode: "controlled_fixture",
     status: kind === "training" ? "ready_for_alignment_review" : kind === "non_training" ? "alternative_recommended" : "evidence_required",
-    approved_diagnosis: { hypothesis_id: "hyp_1", signal_id: "sig_1", human_revised: false,
+    approved_diagnosis: { hypothesis_id: "hyp_1", signal_id: "sig_top", human_revised: false,
       diagnosis: { observed_behavioral_defect: "Missed clarity", cause_domain: "skill_gap", performance_dimension: "capability", explanation: "Human approved", supporting_evidence: [{ item_id: "ev_1", evaluation_id: "eval_1" }], conflicting_evidence: [], missing_evidence: [] } },
     intervention: { run_id: run, diagnosis_id: "hyp_1", decision_type: kind,
       rationale: kind === "training" ? "Practice the resolution summary." : "Training is not supported by this evidence.",

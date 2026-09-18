@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { label } from "../lib/diagnostics";
 import { ALIGNMENT_DIMENSIONS, type AlignmentReview } from "../lib/designs";
 
@@ -11,6 +12,68 @@ const DIMENSION_TITLES: Record<(typeof ALIGNMENT_DIMENSIONS)[number], string> = 
   intervention_to_package: "Validated intervention → package",
 };
 
+const shortElementId = (review: AlignmentReview, id: string) =>
+  id.startsWith(`${review.run_id}/`) ? id.slice(review.run_id.length + 1) : id;
+
+/**
+ * Concise form of the AWS-6 review for the Training page: verdict, assessment, non-calibrated
+ * confidence, and what the reviewer named. The per-dimension detail stays in Agent Insights.
+ */
+export function AlignmentSummary({ review, detailHref }: { review: AlignmentReview; detailHref: string }) {
+  const fixture = review.provider_metadata.generation_mode === "controlled_fixture";
+  const questioned = review.design_status === "design_questioned";
+  const named = (items: string[]) => (items.length > 0 ? <ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul> : "None named.");
+  return (
+    <section className={`home-card alignment-check alignment-summary${questioned ? " questioned" : ""}`} aria-labelledby="alignment-summary-title">
+      <div className="home-card-head">
+        <div>
+          <span className="eyebrow">Alignment review · AWS-6 semantic review</span>
+          <h2 id="alignment-summary-title">Does the package address the confirmed gap?</h2>
+        </div>
+        <Link className="button secondary" href={detailHref}>
+          {questioned ? "Review alignment concerns" : "Open full review"}
+        </Link>
+      </div>
+      <div className="alignment-status" role="status">
+        {questioned ? "DESIGN QUESTIONED" : "DESIGN ALIGNED"} · {label(review.overall_outcome)}
+      </div>
+      <dl>
+        <div>
+          <dt>Overall assessment</dt>
+          <dd>{review.overall_assessment}</dd>
+        </div>
+        <div>
+          <dt>{fixture ? "Fixture confidence value" : "Validator-reported confidence"}</dt>
+          <dd>
+            <strong>{review.provider_reported_confidence}</strong>{" "}
+            <span className="quiet">
+              {fixture ? "Fixed synthetic fixture value. No model reported it." : "Self-report by the validator for this output."}{" "}
+              It is not a statistically calibrated probability.
+            </span>
+          </dd>
+        </div>
+        <div>
+          <dt>Problematic design elements</dt>
+          <dd>{review.misaligned_element_ids.length > 0 ? review.misaligned_element_ids.map((id) => shortElementId(review, id)).join(", ") : "None named."}</dd>
+        </div>
+        <div>
+          <dt>Unsupported assumptions</dt>
+          <dd>{named(review.unsupported_assumptions)}</dd>
+        </div>
+        <div>
+          <dt>Missing information</dt>
+          <dd>{named(review.missing_information)}</dd>
+        </div>
+      </dl>
+      <p className="quiet alignment-origin">
+        {fixture ? "Controlled non-AI fixture" : "AI semantic review"} ({review.provider_metadata.provider}
+        {review.provider_metadata.model ? ` / ${review.provider_metadata.model}` : ""}) · review {review.alignment_review_id}.
+        Not a human decision. The package is not deployed and no outcome has been measured.
+      </p>
+    </section>
+  );
+}
+
 /**
  * AWS-6 semantic alignment review of a stored AWS-5 package. It is an AI (or fixture)
  * judgement about meaning, not a human decision and not the AWS-5 structural trace. It never
@@ -19,7 +82,7 @@ const DIMENSION_TITLES: Record<(typeof ALIGNMENT_DIMENSIONS)[number], string> = 
 export default function AlignmentCheck({ review }: { review: AlignmentReview }) {
   const fixture = review.provider_metadata.generation_mode === "controlled_fixture";
   const questioned = review.design_status === "design_questioned";
-  const shortId = (id: string) => (id.startsWith(`${review.run_id}/`) ? id.slice(review.run_id.length + 1) : id);
+  const shortId = (id: string) => shortElementId(review, id);
   return (
     <section className={`design-section alignment-check${questioned ? " questioned" : ""}`} aria-label="Alignment check">
       <span className="eyebrow">Alignment Check</span>
