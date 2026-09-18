@@ -323,8 +323,18 @@ function RevisionForm({
   );
 }
 
-export default function ReviewWorkspace() {
+/**
+ * The deep diagnostic workspace (Agent Insights). `initialSignalId` lets Home open it on the
+ * signal Home summarized; an unknown id falls back to an observed signal with a notice.
+ */
+export default function ReviewWorkspace({
+  initialSignalId = null,
+}: {
+  initialSignalId?: string | null;
+} = {}) {
   const [signals, setSignals] = useState<Signal[]>([]);
+  // The deep-linked id is applied only after the signal list confirms it exists, so no
+  // evidence request is made for an unknown signal.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [bundle, setBundle] = useState<EvidenceBundle | null>(null);
   const [records, setRecords] = useState<RecordState[]>([]);
@@ -378,9 +388,11 @@ export default function ReviewWorkspace() {
       setSignals(result);
       setLoadingSignal(true);
       setSelectedId((current) =>
-        result.some((signal) => signal.signal_id === current)
-          ? current
-          : (result[0]?.signal_id ?? null),
+        result.some((signal) => signal.signal_id === initialSignalId)
+            ? initialSignalId
+            : result.some((signal) => signal.signal_id === current)
+              ? current
+              : (result[0]?.signal_id ?? null),
       );
     } catch (cause) {
       setError((cause as Error).message);
@@ -389,7 +401,7 @@ export default function ReviewWorkspace() {
     } finally {
       setLoadingSignals(false);
     }
-  }, []);
+  }, [initialSignalId]);
   useEffect(() => {
     void Promise.resolve().then(loadSignals);
   }, [loadSignals]);
@@ -583,28 +595,10 @@ export default function ReviewWorkspace() {
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            C<span>●</span>
-          </span>
-          <div>
-            <strong>
-              CoachLens <em>AI</em>
-            </strong>
-            <span>Evidence-Driven Performance Diagnosis</span>
-          </div>
-        </div>
-        <div className="topbar-right">
-          <span className="workspace-label">REVIEW WORKSPACE</span>
-          <span className="milestone">MILESTONE 05</span>
-        </div>
-      </header>
       <main className="workspace">
         <div className="workspace-heading">
           <div>
-            <span className="eyebrow">Human diagnostic validation</span>
+            <span className="eyebrow">Agent Insights · Human diagnostic validation</span>
             <h1>From QA evidence to a reviewed diagnosis.</h1>
             <p>
               Inspect the observation, challenge the hypothesis, and record the
@@ -646,6 +640,12 @@ export default function ReviewWorkspace() {
             </button>
           </div>
         )}
+        {!loadingSignals && initialSignalId && signals.length > 0 &&
+          !signals.some((signal) => signal.signal_id === initialSignalId) && (
+            <p role="status" className="banner">
+              Requested signal is unavailable. Showing an observed criterion instead.
+            </p>
+          )}
         <div className="workspace-grid">
           <aside className="signal-nav" aria-label="Observed QA signals">
             <div className="rail-heading">
@@ -994,8 +994,8 @@ export default function ReviewWorkspace() {
                                 <strong>{label(currentValidation.validation_outcome)}</strong>
                                 <span>{currentValidation.semantic_status === "evidence_validated" ? "EVIDENCE VALIDATED" : "EVIDENCE QUESTIONED"}</span>
                                 <small>
-                                  {isDemo ? "Fixed fixture review of the original fixture proposal." : "AI review of the original AI proposal."}{" "}
-                                  Not a human decision.
+                                  Semantic review of the original provider proposal. Not a human
+                                  decision or a review of any later human revision.
                                 </small>
                               </div>
                               <p>{currentValidation.support_assessment}</p>
@@ -1469,13 +1469,5 @@ export default function ReviewWorkspace() {
           </aside>
         </div>
       </main>
-      <footer className="footer">
-        CoachLens AI · Review Workspace{" "}
-        <span>
-          M5 extends human-validated diagnosis to a proposed intervention. Independent alignment review begins in a later
-          milestone.
-        </span>
-      </footer>
-    </div>
   );
 }

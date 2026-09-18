@@ -1,5 +1,5 @@
-import ReviewWorkspace from "./review-workspace";
+import CommandCenter from "./command-center";
 
-export default function Home() {
-  return <ReviewWorkspace />;
+export default function HomePage() {
+  return <CommandCenter />;
 }
