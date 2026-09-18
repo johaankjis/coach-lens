@@ -225,9 +225,11 @@ function StatTile({ metric }: { metric: SummaryMetric }) {
 function PerformanceGaps({
   model,
   onSelectSignal,
+  disabled = false,
 }: {
   model: HomeReadModel;
   onSelectSignal?: (signalId: string) => void;
+  disabled?: boolean;
 }) {
   const selectedId = model.priority?.signalId ?? null;
   return (
@@ -253,6 +255,7 @@ function PerformanceGaps({
                   type="button"
                   className="gap-select"
                   aria-pressed={selected}
+                  disabled={disabled}
                   onClick={() => onSelectSignal?.(gap.signalId)}
                 >
                   <span className="gap-title">
@@ -343,7 +346,9 @@ function HumanValidationPanel({
     if (bundle || !controls) return;
     setBundleState("loading");
     try {
-      setBundle(await controls.loadBundle(insight.signalId));
+      const loaded = await controls.loadBundle(insight.signalId);
+      if (loaded.signal.signal_id !== insight.signalId) throw new Error("Evidence does not match the selected signal.");
+      setBundle(loaded);
       setBundleState("idle");
     } catch {
       setBundleState("error");
@@ -449,15 +454,16 @@ function HumanValidationPanel({
                     <p role="status" className="state-copy">
                       Loading source evidence references…
                     </p>
+                  ) : bundleState === "error" ? (
+                    <div className="banner" role="alert">
+                      <p>Source evidence references could not be loaded. Review them before revising.</p>
+                      <button type="button" className="button secondary" onClick={() => void openRevise()}>
+                        Retry references
+                      </button>{" "}
+                      <Link href={insight.reviewHref}>Open Agent Insights</Link>
+                    </div>
                   ) : (
-                    <>
-                      {bundleState === "error" && (
-                        <p className="banner" role="status">
-                          Source evidence rows could not be loaded. The original citations are kept; open Agent
-                          Insights to re-cite individual rows.
-                        </p>
-                      )}
-                      <RevisionForm
+                    <RevisionForm
                         key={bundle ? "with-bundle" : "signal-only"}
                         original={record.provider_hypothesis}
                         bundle={bundle}
@@ -468,8 +474,7 @@ function HumanValidationPanel({
                         }
                         busy={busy}
                         demo={demo}
-                      />
-                    </>
+                    />
                   )}
                 </div>
               )}
@@ -901,6 +906,7 @@ export function CommandCenterView({
   refreshing = false,
   onSelectSignal,
   controls,
+  switching = false,
 }: {
   model: HomeReadModel;
   greeting?: string;
@@ -908,6 +914,7 @@ export function CommandCenterView({
   refreshing?: boolean;
   onSelectSignal?: (signalId: string) => void;
   controls?: ValidationControls;
+  switching?: boolean;
 }) {
   return (
     <main className="workspace home" aria-labelledby="home-title">
@@ -946,7 +953,7 @@ export function CommandCenterView({
       </section>
 
       <div className="home-grid">
-        <PerformanceGaps model={model} onSelectSignal={onSelectSignal} />
+        <PerformanceGaps model={model} onSelectSignal={onSelectSignal} disabled={switching} />
         <SelectedInsightCard model={model} controls={controls} />
         <EvidencePanel model={model} />
       </div>
@@ -974,6 +981,7 @@ export default function CommandCenter({ initialSignalId = null }: { initialSigna
     try {
       const loaded = await loadHomeSources(signalId);
       if (request !== requestNumber.current) return;
+      selectedRef.current = loaded.priority?.signal.signal_id ?? null;
       setSources(loaded);
       setModel(buildHomeReadModel(loaded));
     } catch (cause) {
@@ -992,7 +1000,10 @@ export default function CommandCenter({ initialSignalId = null }: { initialSigna
       : null;
 
   async function decide(decision: ValidationDecision) {
-    if (!record || busyRef.current) return; // Ignore double clicks and overlapping mutations.
+    if (!record || busyRef.current || loading ||
+        selectedRef.current !== record.provider_hypothesis.signal_id ||
+        model?.priority?.signalId !== record.provider_hypothesis.signal_id) return;
+    // Ignore double clicks and decisions from a record that is no longer selected.
     const id = record.provider_hypothesis.hypothesis_id;
     const signalId = selectedRef.current;
     busyRef.current = true;
@@ -1077,15 +1088,19 @@ export default function CommandCenter({ initialSignalId = null }: { initialSigna
       <CommandCenterView
         model={model!}
         greeting={greetingFor(new Date().getHours())}
-        onRefresh={() => void load(selectedRef.current)}
-        refreshing={loading}
+        onRefresh={() => { if (!busyRef.current) void load(selectedRef.current); }}
+        refreshing={loading || busy}
         onSelectSignal={(signalId) => {
+          if (busyRef.current || loading || signalId === model?.priority?.signalId) return;
           setDecisionError(null);
+          setSources(null);
+          setModel(null);
           void load(signalId);
         }}
+        switching={loading || busy}
         controls={{
           record,
-          busy,
+          busy: busy || loading,
           error: decisionError,
           onDecide: (decision) => void decide(decision),
           loadBundle,

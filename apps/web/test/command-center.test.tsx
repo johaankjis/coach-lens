@@ -681,6 +681,42 @@ describe("Home data states and M4 decisions against the backend", () => {
     expect(await screen.findByText("Design aligned · Aligned")).toBeInTheDocument();
   });
 
+  it("removes the previous signal's actions and evidence while another gap loads", async () => {
+    const { mock } = route();
+    const backendFetch = globalThis.fetch;
+    let finishSecond!: (response: Response) => void;
+    const secondRecord = new Promise<Response>((resolve) => { finishSecond = resolve; });
+    vi.stubGlobal("fetch", vi.fn((path: string, init?: RequestInit) =>
+      path.endsWith("/sig_second/hypotheses") ? secondRecord : backendFetch(path, init),
+    ));
+    render(<CommandCenter />);
+    await screen.findByRole("region", { name: "Resolution clarity" });
+    await userEvent.type(screen.getByPlaceholderText("Your reviewer ID"), "qa-lead");
+    await userEvent.click(screen.getByRole("button", { name: /HIPAA verification/ }));
+    expect(screen.getByRole("status")).toHaveTextContent("Loading team summary");
+    expect(screen.queryByRole("region", { name: "Resolution clarity" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Evidence from QA" })).not.toBeInTheDocument();
+    expect(posts(mock)).toHaveLength(0);
+    finishSecond(reply([]));
+    expect(await screen.findByRole("region", { name: "HIPAA verification" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View full evidence in Agent Insights" })).toHaveAttribute("href", "/agent-insights?signal=sig_second");
+  });
+
+  it("does not offer revision when evidence references belong to another signal", async () => {
+    const controls = controlsFor(awaiting, {
+      reviewer: "qa-lead",
+      loadBundle: vi.fn(async () => ({ ...bundle, signal: secondSignal })),
+    });
+    render(<CommandCenterView model={buildHomeReadModel(sources())} controls={controls} />);
+    await userEvent.click(screen.getByRole("button", { name: "Revise" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Source evidence references could not be loaded");
+    expect(screen.queryByRole("button", { name: "Save revision" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry references" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Agent Insights" })).toHaveAttribute("href", "/agent-insights?signal=sig_top");
+    expect(controls.onDecide).not.toHaveBeenCalled();
+  });
+
   it("opens on a deep-linked signal and falls back with a notice when it is unknown", async () => {
     const { unmount } = render(<CommandCenter initialSignalId="sig_second" />);
     route();
