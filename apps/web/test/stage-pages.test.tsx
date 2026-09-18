@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import KpiTrackerPage from "../app/kpi-tracker/page";
 import RolePlayPage from "../app/role-play/page";
 import TrainingPage from "../app/training/page";
+import TrainingWorkspace from "../app/training/training-workspace";
 import { designFixture } from "./design-workspace.test-fixture";
 import { interventionFixture } from "./intervention-workspace.test-fixture";
 import { approved, awaiting, demoMode, providerPackage, realMode, secondSignal, topSignal } from "./home.test-fixture";
@@ -44,7 +45,7 @@ describe("Training page", () => {
   it("renders the real AWS-5 package with its validated intervention context (L)", async () => {
     route({ intervention: interventionFixture("practice_simulation", "aligned"), design: providerPackage() });
     render(await TrainingPage(params("sig_top")));
-    expect(screen.getByRole("heading", { level: 1, name: "Generated training package" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Training package" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { level: 2, name: "Resolution clarity" })).toBeInTheDocument();
     const context = screen.getByRole("region", { name: "Resolution clarity" });
     expect(within(context).getByText("Practice Simulation · solution validated")).toHaveClass("validated");
@@ -97,6 +98,16 @@ describe("Training page", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Requested signal is unavailable");
     expect(screen.getByRole("heading", { level: 2, name: "Resolution clarity" })).toBeInTheDocument();
     expect(mock).not.toHaveBeenCalledWith(expect.stringContaining("sig_missing"), expect.anything());
+  });
+
+  it("clears the previous package immediately when the selected signal changes", async () => {
+    route({ intervention: interventionFixture("practice_simulation", "aligned"), design: providerPackage() });
+    const view = render(<TrainingWorkspace signalId="sig_top" />);
+    expect(await screen.findByRole("heading", { name: "What was generated" })).toBeInTheDocument();
+    view.rerender(<TrainingWorkspace signalId="sig_second" />);
+    expect(screen.queryByRole("heading", { name: "What was generated" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "HIPAA verification" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "No training package" })).toBeInTheDocument();
   });
 
   it("shows an error with retry when the backend is unavailable (A)", async () => {
@@ -189,6 +200,7 @@ describe("KPI Tracker page", () => {
     route({ signals: [], mode: { ...realMode, evaluation_count: 0, signal_count: 0 } });
     render(<KpiTrackerPage />);
     expect(await screen.findByText("No QA signals are loaded.")).toBeInTheDocument();
+    expect(screen.getByText("Baseline pending")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });

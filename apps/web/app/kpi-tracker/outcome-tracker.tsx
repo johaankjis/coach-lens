@@ -34,7 +34,7 @@ export default function OutcomeTracker() {
               </div>
               <ul className="outcome-steps">
                 <li>
-                  <strong>Baseline established</strong>
+                  <strong>{model.observedSignalCount > 0 ? "Baseline observed" : "Baseline pending"}</strong>
                   <span>
                     {model.provenance.label}. {model.observedSignalCount} observed criteria with M2 failure counts.
                   </span>

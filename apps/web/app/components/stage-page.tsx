@@ -100,7 +100,7 @@ export function InterventionContext({ insight }: { insight: PriorityInsight }) {
       <Pipeline insight={insight} />
       <div className="insight-grid">
         <div className="insight-field">
-          <span className="field-label">Validated diagnosis</span>
+          <span className="field-label">Diagnosis and human review</span>
           {diagnosis.state === "proposed" ? (
             <>
               <strong>{diagnosis.observedDefect}</strong>
@@ -119,7 +119,7 @@ export function InterventionContext({ insight }: { insight: PriorityInsight }) {
           )}
         </div>
         <div className="insight-field">
-          <span className="field-label">Validated intervention</span>
+          <span className="field-label">Intervention and solution</span>
           <Pill tone={interventionTone.tone}>{interventionTone.text}</Pill>
           {proposed ? (
             <>

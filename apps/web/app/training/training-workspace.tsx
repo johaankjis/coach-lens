@@ -15,8 +15,8 @@ export default function TrainingWorkspace({ signalId }: { signalId: string | nul
   return (
     <StagePage
       eyebrow="Training · AWS-5 training designer"
-      title="Generated training package"
-      lead="The outline, activities, knowledge check, and design status CoachLens produced for a solution-validated training intervention. Generated training is not deployed training."
+      title="Training package"
+      lead="Review the AWS-5 outline, activities, knowledge check, and design status when a package has been generated. Generated training is not deployed training."
       load={load}
     >
       {(model) => {

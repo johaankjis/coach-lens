@@ -466,14 +466,30 @@ function evidenceReview(
 }
 
 /** The AWS-4 record only counts when it belongs to the validated record Home summarizes. */
-function interventionFor(record: RecordState | null, intervention: InterventionRecord | null) {
+function interventionFor(signal: Signal, record: RecordState | null, intervention: InterventionRecord | null) {
   if (!record || !validated(record) || !intervention) return null;
-  return intervention.hypothesis_id === record.provider_hypothesis.hypothesis_id ? intervention : null;
+  return intervention.hypothesis_id === record.provider_hypothesis.hypothesis_id &&
+    intervention.signal_id === signal.signal_id &&
+    intervention.validated_diagnosis.signal_id === signal.signal_id &&
+    intervention.proposal.signal_id === signal.signal_id
+    ? intervention : null;
 }
 
-function designFor(record: RecordState | null, design: DesignResult | null) {
-  if (!record || !validated(record) || !design) return null;
-  return design.diagnosis_id === record.provider_hypothesis.hypothesis_id ? design : null;
+function designFor(signal: Signal, record: RecordState | null, intervention: InterventionRecord | null, design: DesignResult | null) {
+  if (!record || !validated(record) || !intervention || !design) return null;
+  const id = record.provider_hypothesis.hypothesis_id;
+  if (design.diagnosis_id !== id || design.approved_diagnosis.signal_id !== signal.signal_id ||
+      design.approved_diagnosis.human_revised !== (record.human_revision !== null) ||
+      design.intervention.decision_type !== intervention.handoff.decision_type) return null;
+  if (design.training_design) {
+    if (intervention.status !== "solution_validated" || intervention.handoff.training_design_gate !== "permitted" ||
+        intervention.handoff.decision_type !== "training") return null;
+    // Provider packages identify the exact AWS-4 proposal and validation they used.
+    if (design.generation_mode === "provider" &&
+        (design.intervention.intervention_id !== intervention.proposal.intervention_id ||
+         design.intervention.solution_validation_id !== intervention.solution_validation?.solution_validation_id)) return null;
+  }
+  return design;
 }
 
 function interventionStage(record: RecordState | null, intervention: InterventionRecord | null): InterventionStage {
@@ -527,7 +543,6 @@ function trainingStage(
   intervention: InterventionStage,
   design: DesignResult | null,
 ): TrainingStage {
-  if (design?.training_design) return { state: "generated", ...packageSummary(signalId, design) };
   if (intervention.state === "blocked")
     return { state: "blocked", reason: "Requires a human-validated diagnosis and a solution-validated intervention." };
   if (intervention.state === "not_started")
@@ -548,6 +563,7 @@ function trainingStage(
     return { state: "awaiting_solution", reason: `${kind} is proposed. Training design waits for the solution review.` };
   if (intervention.state === "solution_questioned" || intervention.trainingDesignGate === "withheld")
     return { state: "withheld", reason: `The solution review questioned the ${kind.toLowerCase()} proposal, so training design is withheld.` };
+  if (design?.training_design) return { state: "generated", ...packageSummary(signalId, design) };
   return { state: "permitted", reason: `${kind} is solution validated. No training package has been generated yet.` };
 }
 
@@ -743,9 +759,11 @@ function evidencePreview(record: RecordState | null): EvidencePreview | null {
 }
 
 export function buildPriorityInsight(source: InsightSources): PriorityInsight {
-  const { signal, record, validation } = source;
-  const interventionRecord = interventionFor(record, source.intervention);
-  const design = designFor(record, source.design);
+  const { signal } = source;
+  const record = source.record?.provider_hypothesis.signal_id === signal.signal_id ? source.record : null;
+  const validation = source.validation?.signal_id === signal.signal_id ? source.validation : null;
+  const interventionRecord = interventionFor(signal, record, source.intervention);
+  const design = designFor(signal, record, interventionRecord, source.design);
   const diagnosis = workingDiagnosis(record);
   const evidence = evidenceReview(record, validation);
   const human = humanValidation(record);

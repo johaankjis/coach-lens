@@ -9,7 +9,7 @@ import { designFixture } from "./design-workspace.test-fixture";
 import { interventionFixture } from "./intervention-workspace.test-fixture";
 
 const signal: Signal = {
-  signal_id: "sig_1", domain: "member_experience", criterion: "Resolution clarity", evaluated_results: 2,
+  signal_id: "sig_top", domain: "member_experience", criterion: "Resolution clarity", evaluated_results: 2,
   evaluated_evaluations: 2, total_evaluations: 3, pass_count: 1, fail_count: 1, fail_rate: "0.5", feedback_count: 2,
   affected_evaluation_ids: ["eval_1"],
 };
@@ -26,7 +26,7 @@ const evidence: EvidenceBundle = {
 };
 const approved: RecordState = {
   provider_hypothesis: {
-    hypothesis_id: "hyp_1", signal_id: "sig_1", observed_behavioral_defect: "One source QA result failed",
+    hypothesis_id: "hyp_1", signal_id: "sig_top", observed_behavioral_defect: "One source QA result failed",
     cause_domain: "skill_gap", performance_dimension: "capability", explanation: "Provider proposed a skill gap.",
     supporting_evidence: [{ item_id: "ev_1", evaluation_id: "eval_1" }], conflicting_evidence: [], missing_evidence: [],
     provider_reported_confidence: "0.78", provider_metadata: { provider: "test-provider", model: null },

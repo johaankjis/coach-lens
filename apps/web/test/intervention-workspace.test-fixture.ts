@@ -18,9 +18,9 @@ export function interventionFixture(
     : { provider: "Amazon Bedrock", model: "global.anthropic.claude-sonnet-4-6", generation_mode: mode } as const;
   const status = outcome === null ? "intervention_proposed" : outcome === "aligned" ? "solution_validated" : "solution_questioned";
   return {
-    hypothesis_id: "hyp_1", signal_id: "sig_1",
+    hypothesis_id: "hyp_1", signal_id: "sig_top",
     validated_diagnosis: {
-      hypothesis_id: "hyp_1", signal_id: "sig_1", approved_by: "supervisor-1", approved_at: "2026-09-17T12:00:00Z",
+      hypothesis_id: "hyp_1", signal_id: "sig_top", approved_by: "supervisor-1", approved_at: "2026-09-17T12:00:00Z",
       human_revised: options.humanRevised ?? false,
       diagnosis: { observed_behavioral_defect: "One source QA result failed", cause_domain: options.humanRevised ? "process_gap" : "skill_gap",
         performance_dimension: options.humanRevised ? "undetermined" : "capability", explanation: "Validated explanation",
@@ -29,7 +29,7 @@ export function interventionFixture(
     diagnosis_digest: "digest", evidence_review_status: options.reviewStatus ?? "not_reviewed", semantic_review: null,
     status,
     proposal: {
-      intervention_id: "int_1", hypothesis_id: "hyp_1", signal_id: "sig_1", intervention_type: type,
+      intervention_id: "int_1", hypothesis_id: "hyp_1", signal_id: "sig_top", intervention_type: type,
       recommendation: "Rehearse the closing summary in short simulated calls.",
       rationale: "The validated skill gap is best closed by practice with feedback.",
       target_change: "State the next step and confirm member understanding before closing.",

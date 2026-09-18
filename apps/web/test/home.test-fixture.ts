@@ -155,6 +155,7 @@ export function providerPackage(): DesignResult {
   return {
     ...base,
     generation_mode: "provider",
+    intervention: { ...base.intervention, intervention_id: "int_1", solution_validation_id: "sol_1" },
     training_design: {
       ...d,
       objectives: [{ ...d.objectives[0], standard: "both elements audible before the close" }],

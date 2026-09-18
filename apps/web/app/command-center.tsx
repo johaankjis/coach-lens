@@ -81,7 +81,7 @@ export function trainingPill(stage: TrainingStage): { tone: StatusTone; text: st
     case "not_applicable":
       return { tone: "not_applicable", text: "Training not applicable" };
     case "permitted":
-      return { tone: "pending", text: "Permitted · not generated" };
+      return { tone: "pending", text: "Ready to generate · not generated" };
     case "generated":
       return { tone: "validated", text: "Training generated · not deployed" };
   }
@@ -578,7 +578,7 @@ export function CommandCenterView({
           <span className="eyebrow">Command center</span>
           <h1 id="home-title">What needs attention across the team?</h1>
           <p>
-            Observed QA criteria, the working diagnosis under review, the validated intervention,
+            Observed QA criteria, the working diagnosis under review, the intervention and solution state,
             and where to go next. Home summarizes; Agent Insights explains.
           </p>
         </div>

@@ -53,7 +53,7 @@ export async function loadInsight(signal: Signal): Promise<InsightSources> {
     isRecordList,
   );
   // The M3 list is newest first; Home summarizes the latest review record only.
-  const record = records[0] ?? null;
+  const record = records[0]?.provider_hypothesis.signal_id === signal.signal_id ? records[0] : null;
   let validation: EvidenceValidation | null = null;
   let intervention: InterventionRecord | null = null;
   let design: DesignResult | null = null;

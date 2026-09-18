@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { loadHomeSources } from "../../lib/home/load";
 import { buildHomeReadModel, type HomeReadModel, type HomeSources } from "../../lib/home/read-model";
 
@@ -22,21 +22,28 @@ export function useInsightSources(signalId: string | null): InsightLoad {
   const [model, setModel] = useState<HomeReadModel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const requestNumber = useRef(0);
   const load = useCallback(async () => {
+    const request = ++requestNumber.current;
     setLoading(true);
     setError(null);
     try {
       const loaded = await loadHomeSources(signalId);
+      if (request !== requestNumber.current) return;
       setSources(loaded);
       setModel(buildHomeReadModel(loaded));
+      setLoadedFor(signalId);
     } catch (cause) {
-      setError((cause as Error).message);
+      if (request === requestNumber.current) setError((cause as Error).message);
     } finally {
-      setLoading(false);
+      if (request === requestNumber.current) setLoading(false);
     }
   }, [signalId]);
   useEffect(() => {
     void Promise.resolve().then(load);
   }, [load]);
-  return { sources, model, error, loading, reload: () => void load() };
+  const current = loadedFor === signalId;
+  return { sources: current ? sources : null, model: current ? model : null,
+    error: current ? error : null, loading: loading || !current, reload: () => void load() };
 }

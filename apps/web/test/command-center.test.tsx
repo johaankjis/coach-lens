@@ -164,7 +164,7 @@ describe("Command Center view from a typed read-model", () => {
     expect(within(field("Intervention")).getByText("Training · solution validated")).toHaveClass("validated");
     expect(within(field("Solution validation")).getByText("Solution validated · Aligned")).toHaveClass("validated");
     expect(within(field("Solution validation")).getByText(/Not a human approval, and not training alignment/)).toBeInTheDocument();
-    expect(within(field("Training package")).getByText("Permitted · not generated")).toHaveClass("pending");
+    expect(within(field("Training package")).getByText("Ready to generate · not generated")).toHaveClass("pending");
     expect(within(field("Alignment review")).getByText("Blocked upstream")).toBeInTheDocument();
     expect(within(priorityCard()).getByText("Generate training")).toHaveAttribute("href", "/agent-insights?signal=sig_top");
     expect(within(downstreamCards()[1]).getByRole("link", { name: /Generate training/ })).toHaveAttribute("href", "/agent-insights?signal=sig_top");

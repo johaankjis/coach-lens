@@ -272,6 +272,30 @@ describe("Home read-model builder", () => {
     expect(unvalidated.training.state).toBe("blocked");
   });
 
+  it("does not attach stale signal, intervention, or package records to the selected insight", () => {
+    const intervention = interventionFixture("practice_simulation", "aligned");
+    const packageResult = providerPackage();
+    const selected = (overrides: Partial<ReturnType<typeof insight>>) =>
+      buildHomeReadModel(sources({ priority: insight({ record: approved, intervention, design: packageResult, ...overrides }) })).priority!;
+
+    expect(selected({ record: { ...approved, provider_hypothesis: { ...approved.provider_hypothesis, signal_id: "sig_second" } } }).diagnosis.state).toBe("not_requested");
+    expect(selected({ intervention: { ...intervention, signal_id: "sig_second" } }).training.state).toBe("blocked");
+    expect(selected({ design: { ...packageResult, approved_diagnosis: { ...packageResult.approved_diagnosis, signal_id: "sig_second" } } }).training.state).toBe("permitted");
+    expect(selected({ design: { ...packageResult, intervention: { ...packageResult.intervention, intervention_id: "old_intervention" } } }).training.state).toBe("permitted");
+    expect(selected({ design: { ...packageResult, intervention: { ...packageResult.intervention, solution_validation_id: "old_validation" } } }).training.state).toBe("permitted");
+  });
+
+  it("keeps current AWS-4 decision ahead of an outdated generated package", () => {
+    const design = providerPackage();
+    const questioned = buildHomeReadModel(sources({ priority: insight({ record: approved, intervention: interventionFixture("training", "misaligned"), design }) })).priority!;
+    expect(questioned.training.state).toBe("withheld");
+    expect(questioned.alignment.state).toBe("blocked");
+    expect(questioned.nextStep.label).toBe("Review solution concerns");
+    const process = buildHomeReadModel(sources({ priority: insight({ record: approved, intervention: interventionFixture("process_correction", "aligned"), design }) })).priority!;
+    expect(process.training.state).toBe("not_applicable");
+    expect(process.alignment.state).toBe("not_applicable");
+  });
+
   it("validates the runtime mode shape with and without the AWS-4 provider fields", () => {
     expect(isRuntimeMode(realMode)).toBe(true);
     const older = { ...realMode };
