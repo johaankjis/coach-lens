@@ -151,7 +151,8 @@ def validate_training(raw: object, context: DesignInput) -> TrainingDesign:
     if not all(any(b.behavior_id in o.behavior_ids for o in design.objectives) for b in design.target_behaviors):
         raise InvalidDesignOutput("Every target behavior needs an objective")
     scheduled = {activity_id for section in design.outline for activity_id in section.activity_ids}
-    if not scheduled >= activities:
+    if not scheduled >= activities or len([activity_id for section in design.outline
+                                           for activity_id in section.activity_ids]) != len(activities):
         raise InvalidDesignOutput("Every activity must appear in the training outline")
     practiced = {behavior_id for scenario in design.practice_scenarios for behavior_id in scenario.behavior_ids}
     if not practiced >= behaviors:
@@ -167,6 +168,10 @@ def validate_training(raw: object, context: DesignInput) -> TrainingDesign:
                 basis.gap.performance_dimension != approved.diagnosis.performance_dimension or
                 basis.gap.human_revised != approved.human_revised or basis.intervention.run_id != run):
             raise InvalidDesignOutput("Design basis disagrees with the approved diagnosis")
+        for scenario in design.practice_scenarios:
+            if len(scenario.beats) < 2 or not set(scenario.behavior_ids) <= {
+                    behavior_id for beat in scenario.beats for behavior_id in beat.behavior_ids}:
+                raise InvalidDesignOutput("Provider practice must script and exercise every behavior")
     # Every placeholder token in the design must be a declared missing operational detail, so
     # nothing is silently left as a gap and nothing undeclared can pose as supplied fact.
     declared = {detail.placeholder for detail in design.missing_operational_details}
@@ -174,6 +179,6 @@ def validate_training(raw: object, context: DesignInput) -> TrainingDesign:
         raise InvalidDesignOutput("Missing operational details need distinct placeholder tokens")
     used = {token for text in _texts(design.model_dump(mode="python", exclude={"missing_operational_details"}))
             for token in PLACEHOLDER_PATTERN.findall(text)}
-    if not used <= declared:
-        raise InvalidDesignOutput("Undeclared placeholder in training design")
+    if used != declared:
+        raise InvalidDesignOutput("Operational placeholders must be used and declared")
     return design

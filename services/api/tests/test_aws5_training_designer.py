@@ -20,7 +20,7 @@ from app.design.bedrock import (GAP_REFERENCE, REQUEST_KEYS, SYSTEM_PROMPT, Bedr
                                 DesignerResponse, build_designer_request, converse_text,
                                 parse_designer_response, response_contract, to_training_design)
 from app.design.demo import DemoDesignFixture
-from app.design.guidance import GUIDANCE_VERSION, PRINCIPLES, TEMPLATE_CHAIN, guidance_text
+from app.design.guidance import DESIGN_CHAIN, GUIDANCE_VERSION, PRINCIPLES, guidance_text
 from app.design.intervention_input import (ValidatedTrainingIntervention,
                                            training_intervention_from_decision)
 from app.design.models import DesignResult, TrainingDesign, TrainingFocus
@@ -82,7 +82,7 @@ def package(focus="skill", **changes):
                         "instructions": "Run the practice scenario, then debrief with the rubric.",
                         "objective_ids": ["O1"], "expected_learner_behavior": "Delivers the closing sequence under challenge.",
                         "success_indicator": "Rubric criterion met.", "duration_minutes": 15}],
-        "knowledge_checks": [knowledge_check()] if focus != "skill" else [],
+        "knowledge_checks": [knowledge_check()],
         "practice_scenarios": [{
             "id": "P1", "title": "Confirm a follow-up resolution",
             "call_driver": "The member wants to know what happens now that a request was updated.",
@@ -190,10 +190,12 @@ def test_knowledge_intervention_produces_traceable_objective_activity_and_check(
 
 
 def test_knowledge_focus_without_a_knowledge_check_is_refused():
-    with pytest.raises(InvalidDesignOutput, match="knowledge check"):
-        parse_designer_response(json.dumps(package("skill")), TrainingFocus.KNOWLEDGE)
-    with pytest.raises(InvalidDesignOutput, match="knowledge check"):
-        parse_designer_response(json.dumps(package("skill")), TrainingFocus.KNOWLEDGE_AND_SKILL)
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(json.dumps(package("skill") | {"knowledge_checks": []}), TrainingFocus.KNOWLEDGE)
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(json.dumps(package("skill") | {"knowledge_checks": []}), TrainingFocus.KNOWLEDGE_AND_SKILL)
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(json.dumps(package("skill") | {"knowledge_checks": []}), TrainingFocus.SKILL)
 
 
 # --- B: skill intervention -> meaningful hands-on simulation ------------------------------
@@ -217,9 +219,10 @@ def test_skill_intervention_produces_scripted_practice():
 def test_skill_focus_requires_at_least_two_scripted_turns():
     thin = package()
     thin["practice_scenarios"][0]["beats"] = thin["practice_scenarios"][0]["beats"][:1]
-    with pytest.raises(InvalidDesignOutput, match="two turns"):
+    with pytest.raises(InvalidDesignOutput):
         parse_designer_response(json.dumps(thin), TrainingFocus.SKILL)
-    parse_designer_response(json.dumps(thin | {"knowledge_checks": [knowledge_check()]}), TrainingFocus.KNOWLEDGE)
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(json.dumps(thin), TrainingFocus.KNOWLEDGE)
 
 
 # --- C/D: non-training, process-only, investigate, undetermined are refused --------------
@@ -324,6 +327,22 @@ def test_undeclared_placeholder_or_invented_escalation_is_refused():
     blank_escalation["practice_scenarios"][0]["escalation_expectation"] = "   "
     with pytest.raises(InvalidDesignOutput):
         parse_designer_response(json.dumps(blank_escalation), TrainingFocus.SKILL)
+    unused = package(missing_operational_details=[{"id": "M1", "placeholder": "[PLACEHOLDER:M1]",
+                                                  "description": "A missing fact", "needed_for": "Practice"}])
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(json.dumps(unused), TrainingFocus.SKILL)
+    mismatched = deepcopy(undeclared)
+    mismatched["practice_scenarios"][0]["scenario_setup"] = "Use [PLACEHOLDER:M2]."
+    mismatched["missing_operational_details"] = [{"id": "M1", "placeholder": "[PLACEHOLDER:M2]",
+                                                  "description": "A missing fact", "needed_for": "Practice"}]
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(json.dumps(mismatched), TrainingFocus.SKILL)
+    escalation = package()
+    escalation["practice_scenarios"][0]["escalation_expectation"] = "Transfer to a specialist."
+    service, runtime, _, _ = setup(runtime=FakeRuntime(json.dumps(escalation)))
+    with pytest.raises(DesignError) as failure:
+        run(service)
+    assert failure.value.code == "invalid_design_output" and runtime.calls
 
 
 def test_supplied_operational_context_is_the_only_operational_input_and_is_recorded():
@@ -478,6 +497,20 @@ def test_malformed_or_incomplete_output_is_refused_and_not_stored(text, stop):
         service.get("hyp_1")
     runtime.text, runtime.stop_reason = json.dumps(package()), "end_turn"
     assert run(service).training_design is not None  # A failed run stores nothing and may be retried.
+
+
+def test_raw_json_rejects_duplicate_keys_and_type_coercion():
+    raw = package()
+    raw["activities"][0]["duration_minutes"] = "10"
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(json.dumps(raw), TrainingFocus.SKILL)
+    raw = package()
+    raw["knowledge_checks"][0]["options"][0]["correct"] = 0
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(json.dumps(raw), TrainingFocus.SKILL)
+    duplicate = json.dumps(package())[:-1] + ',"performance_context":"overridden"}'
+    with pytest.raises(InvalidDesignOutput):
+        parse_designer_response(duplicate, TrainingFocus.SKILL)
 
 
 def test_aws_client_failure_is_a_sanitized_502():
@@ -660,7 +693,7 @@ def test_alignment_trace_enumerates_every_gap_to_rubric_path():
 
 def test_system_prompt_separates_guidance_from_contract_and_carries_no_evidence():
     assert GUIDANCE_VERSION in SYSTEM_PROMPT and guidance_text() in SYSTEM_PROMPT
-    assert " -> ".join(TEMPLATE_CHAIN) in SYSTEM_PROMPT
+    assert " -> ".join(DESIGN_CHAIN) in SYSTEM_PROMPT
     assert all(principle in SYSTEM_PROMPT for principle in PRINCIPLES)
     contract = response_contract()
     assert contract in SYSTEM_PROMPT

@@ -14,7 +14,7 @@ import json
 import re
 from typing import Annotated, Callable
 
-from pydantic import Field, ValidationError, field_validator
+from pydantic import ConfigDict, Field, ValidationError, field_validator
 
 from app.diagnostics.bedrock import PROVIDER_NAME
 from app.diagnostics.engine import remote_invocation_policy
@@ -40,6 +40,8 @@ ShortIds = Field(min_length=1, max_length=MAX_ITEMS)
 
 
 class _Node(StrictModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     @field_validator("*", mode="after")
     @classmethod
     def no_blank_text(cls, value):
@@ -146,8 +148,8 @@ class DesignerPracticeScenario(_Node):
     behavior_ids: ShortIdList = ShortIds
     objective_ids: ShortIdList = ShortIds
     activity_id: str = ShortId
-    beats: list[DesignerBeat] = Field(min_length=1, max_length=MAX_ITEMS)
-    escalation_expectation: str | None = Field(default=None, max_length=MAX_TEXT)
+    beats: list[DesignerBeat] = Field(min_length=2, max_length=MAX_ITEMS)
+    escalation_expectation: str | None = Field(max_length=MAX_TEXT)
     completion_criteria: TextList = Field(min_length=1, max_length=MAX_ITEMS)
     rubric: list[DesignerRubricCriterion] = Field(min_length=1, max_length=MAX_ITEMS)
     debrief_prompts: TextList = Field(min_length=1, max_length=MAX_ITEMS)
@@ -166,7 +168,7 @@ class DesignerResponse(_Node):
     objectives: list[DesignerObjective] = Field(min_length=1, max_length=MAX_ITEMS)
     outline: list[DesignerSection] = Field(min_length=1, max_length=MAX_ITEMS)
     activities: list[DesignerActivity] = Field(min_length=1, max_length=MAX_ITEMS)
-    knowledge_checks: list[DesignerKnowledgeCheck] = Field(max_length=MAX_ITEMS)
+    knowledge_checks: list[DesignerKnowledgeCheck] = Field(min_length=1, max_length=MAX_ITEMS)
     practice_scenarios: list[DesignerPracticeScenario] = Field(min_length=1, max_length=MAX_ITEMS)
     missing_operational_details: list[DesignerMissingDetail] = Field(max_length=MAX_ITEMS)
 
@@ -197,9 +199,10 @@ belongs and declare M1 in missing_operational_details with the same placeholder 
 escalation_expectation to null unless escalation handling was supplied. Never invent such
 facts to make the package look complete.
 
-training_focus meaning: knowledge needs at least one knowledge check; skill needs a practice
-scenario with at least two conversational turns that each state the expected learner
-behavior; knowledge_and_skill needs both. Every focus needs at least one practice scenario.
+Every focus needs a decision-based knowledge check and a scripted practice scenario with at
+least two meaningful conversational turns. At each turn, state what the fictional member says,
+the learner decision or response expected, how the member responds to success and challenge,
+and what the facilitator observes. Use the rubric to score the practiced target behaviors.
 Identifiers are short local labels (B1, O1, S1, A1, K1, K1_OPT1, P1, PERSONA1, BEAT1, R1, M1),
 unique across the whole package. Return exactly one JSON object and nothing else."""
 
@@ -248,7 +251,7 @@ FIELD_GUIDANCE = {
     "placeholder": "The exact token used in the text, of the form [PLACEHOLDER:M1].",
     "DesignerMissingDetail.description": "The operational fact that was needed and not supplied.",
     "needed_for": "Which part of the package needs it.",
-    "knowledge_checks": "Required (at least one) for knowledge and knowledge_and_skill focus.",
+    "knowledge_checks": "At least one decision-based check is required for every training package.",
     "missing_operational_details": "One entry per placeholder token used. [] when none were needed.",
 }
 
@@ -363,7 +366,7 @@ def build_designer_request(intervention: ValidatedTrainingIntervention, qa_crite
 def parse_designer_response(text: str, focus: TrainingFocus) -> DesignerResponse:
     """Strict schema plus the ResultsCX package rules that the schema cannot express."""
     try:
-        raw = json.loads(text)
+        raw = json.loads(text, object_pairs_hook=_unique_json_object)
         if not isinstance(raw, dict):
             raise ValueError("not an object")
         result = DesignerResponse.model_validate(raw)
@@ -385,17 +388,31 @@ def parse_designer_response(text: str, focus: TrainingFocus) -> DesignerResponse
         raise InvalidDesignOutput("Package identifiers must be unique")
     if any(behavior.gap_reference != GAP_REFERENCE for behavior in result.target_behaviors):
         raise InvalidDesignOutput("Target behavior must cite the supplied gap reference")
-    if focus in (TrainingFocus.KNOWLEDGE, TrainingFocus.KNOWLEDGE_AND_SKILL) and not result.knowledge_checks:
-        raise InvalidDesignOutput("Knowledge focus requires a knowledge check")
-    if focus in (TrainingFocus.SKILL, TrainingFocus.KNOWLEDGE_AND_SKILL) and not any(
-            len(scenario.beats) >= 2 for scenario in result.practice_scenarios):
-        raise InvalidDesignOutput("Skill focus requires a scripted practice with at least two turns")
+    if not result.knowledge_checks:
+        raise InvalidDesignOutput("Training package requires a knowledge check")
     texts = _all_strings(raw)
     if any(_PERCENT_PATTERN.search(value) for value in texts) or _COUNT_PATTERN.search(result.performance_context):
         raise InvalidDesignOutput("Training designer may not state QA statistics")
     declared = {detail.placeholder for detail in result.missing_operational_details}
-    if any(not PLACEHOLDER_PATTERN.fullmatch(p) for p in declared) or len(declared) != len(result.missing_operational_details):
+    if (any(detail.placeholder != f"[PLACEHOLDER:{detail.id}]"
+            for detail in result.missing_operational_details) or
+            len(declared) != len(result.missing_operational_details)):
         raise InvalidDesignOutput("Missing operational details need distinct placeholder tokens")
+    used = {token for value in _all_strings({key: value for key, value in raw.items()
+                                              if key != "missing_operational_details"})
+            for token in PLACEHOLDER_PATTERN.findall(value)}
+    if used != declared or any("[PLACEHOLDER" in PLACEHOLDER_PATTERN.sub("", value)
+                               for value in texts):
+        raise InvalidDesignOutput("Operational placeholders must be used and declared")
+    return result
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
     return result
 
 
@@ -533,7 +550,8 @@ class BedrockTrainingDesigner:
                 self._diagnostics.reasoner) not in REMOTE_POLICIES_PERMITTED:
             raise DesignError("design_privacy_blocked", "Training design privacy policy blocked")
         request = build_designer_request(intervention, context.signal_criterion)
-        if _sensitive_diagnosis_text(self._diagnostics, [request["confirmed_performance_gap"]["observed_behavior"],
+        if _sensitive_diagnosis_text(self._diagnostics, [request["confirmed_performance_gap"]["qa_criterion"],
+                                                         request["confirmed_performance_gap"]["observed_behavior"],
                                                          request["confirmed_performance_gap"]["cause_explanation"],
                                                          request["validated_intervention"]["summary"],
                                                          *request["supplied_operational_context"]]):
@@ -561,6 +579,9 @@ class BedrockTrainingDesigner:
             from app.diagnostics.evidence_validator import describe_validator_converse
             self._diagnostic_sink(describe_validator_converse(response))
         parsed = parse_designer_response(converse_text(response), intervention.training_focus)
+        if not intervention.operational_context and any(
+                scenario.escalation_expectation is not None for scenario in parsed.practice_scenarios):
+            raise InvalidDesignOutput("Escalation handling was not supplied")
         request_id = response.get("ResponseMetadata", {}).get("RequestId")
         if not isinstance(request_id, str) or len(request_id) > 128:
             request_id = None

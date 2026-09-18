@@ -1,23 +1,23 @@
 """Compact, versioned ResultsCX instructional-design guidance for the Training Designer.
 
 This is the methodology layer only. It never contains QA evidence or generated content.
-Every statement below restates a principle already established from the supplied ResultsCX
-materials and recorded in the repository docs; nothing here is invented from general ISD
-practice. Bump the version whenever the wording changes so a stored design records which
-guidance produced it.
+This follows the diagnosis and design principles recorded in the repository's M3 and M5
+documentation. It does not assert an undocumented ResultsCX template sequence. Bump the
+version whenever the wording changes so a stored design records which guidance produced it.
 """
 
-GUIDANCE_VERSION = "resultscx-design-guidance/1"
+GUIDANCE_VERSION = "resultscx-design-guidance/2"
 
-# The template chain the ResultsCX materials describe. The designer produces the design-side
-# artifacts (from Simulation Outlines onward); the needs analysis is the upstream diagnosis.
-TEMPLATE_CHAIN = (
-    "QA Needs Analysis",
-    "Simulation Outlines",
-    "Simulation Skills Outline",
-    "Persona Details",
-    "Full TSO",
-    "Knowledge Check + Activity",
+# The structural chain M5 documents. These are artifact relationships, not an imported
+# ResultsCX template or a claim that the output is semantically aligned.
+DESIGN_CHAIN = (
+    "human-approved diagnosis",
+    "proposed intervention",
+    "target behavior",
+    "objective",
+    "activity",
+    "practice scenario",
+    "rubric criterion",
 )
 
 PRINCIPLES = (
@@ -55,8 +55,8 @@ PRACTICE_RULES = (
 def guidance_text() -> str:
     """Render the guidance as prompt text. Kept short so it fits every request unchanged."""
     lines = [f"ResultsCX design guidance ({GUIDANCE_VERSION}).",
-             "Template chain: " + " -> ".join(TEMPLATE_CHAIN) + ". You produce the design-side "
-             "artifacts of that chain for one confirmed gap; the needs analysis is already done.",
+             "Documented design chain: " + " -> ".join(DESIGN_CHAIN) + ". You produce the "
+             "design artifacts for one confirmed gap; the diagnosis and intervention are upstream.",
              "Principles:"]
     lines.extend(f"- {principle}" for principle in PRINCIPLES)
     lines.append("Knowledge check rules:")
