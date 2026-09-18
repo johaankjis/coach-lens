@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services" / "api")
 from app.config import get_settings  # noqa: E402
 from app.diagnostics.bedrock import BedrockReasoner  # noqa: E402
 from app.diagnostics.engine import DiagnosticService  # noqa: E402
+from app.diagnostics.engine import ProviderOutputError  # noqa: E402
 from app.diagnostics.evidence_validator import BedrockEvidenceValidator, EvidenceValidationService  # noqa: E402
 from app.results_cx.models import CriterionResult, Domain, Evaluation, SourceLineage  # noqa: E402
 
@@ -55,9 +56,16 @@ async def main():
                        f"{signal.evaluated_evaluations}/{signal.total_evaluations} evaluations"})
     # AWS-3: a separate Converse call reviews the same provider-safe population against the
     # proposal. It records a semantic outcome only; the record stays `awaiting_review`.
+    response_diagnostics = []
     validations = EvidenceValidationService(
-        service, BedrockEvidenceValidator(settings.bedrock_region, settings.bedrock_model_id))
-    validation = await validations.run(hypothesis.hypothesis_id)
+        service, BedrockEvidenceValidator(settings.bedrock_region, settings.bedrock_model_id,
+                                         diagnostic_sink=response_diagnostics.append))
+    try:
+        validation = await validations.run(hypothesis.hypothesis_id)
+    except ProviderOutputError:
+        if response_diagnostics:
+            print({"validator_response_diagnostic": response_diagnostics[-1]})
+        raise
     print({"validation_outcome": validation.validation_outcome.value,
            "semantic_status": validation.semantic_status,
            "supported_reference_count": len(validation.supported_reference_ids),

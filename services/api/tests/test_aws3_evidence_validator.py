@@ -9,11 +9,13 @@ import pytest
 
 from app.diagnostics.bedrock import BedrockReasoner
 from app.diagnostics.engine import ControlledTestReasoner, DiagnosticError, DiagnosticService, ProviderOutputError
-from app.diagnostics.evidence_validator import (FIELD_GUIDANCE, PROMPT, SYSTEM_PROMPT, BedrockEvidenceValidator,
+from app.diagnostics.evidence_validator import (FIELD_GUIDANCE, PROMPT, RESPONSE_SHAPE_EXAMPLE,
+                                                SYSTEM_PROMPT, BedrockEvidenceValidator,
                                                 ControlledTestEvidenceValidator, EvidenceValidationService,
                                                 UnavailableEvidenceValidator, ValidatorResponse,
                                                 _sensitive_diagnosis_text, build_validation_request,
-                                                parse_validator_response, response_contract)
+                                                describe_validator_converse, parse_validator_response,
+                                                response_contract)
 from app.diagnostics.models import EvidenceReference
 from app.main import app
 from app.results_cx import demo
@@ -145,6 +147,67 @@ def test_malformed_semantic_output_fails_closed(change):
 def test_json_parser_rejects_non_object_document(text):
     with pytest.raises(ProviderOutputError):
         parse_validator_response(text, {"EVID-001"})
+
+
+def test_prompt_uses_proven_raw_json_contract_and_valid_seven_key_example():
+    contract = response_contract()
+    assert SYSTEM_PROMPT == PROMPT + "\n\n" + contract
+    assert set(RESPONSE_SHAPE_EXAMPLE) == set(ValidatorResponse.model_fields)
+    assert "exactly these seven keys, all required, and no other keys" in contract
+    assert "no code fences, and no prose" in contract
+    assert "ALWAYS a JSON array of strings, even for one item" in contract
+    assert "ALWAYS a JSON number literal" in contract
+    assert json.loads(contract.rsplit("\n", 1)[1]) == RESPONSE_SHAPE_EXAMPLE
+    assert parse_validator_response(contract.rsplit("\n", 1)[1], {"SIGNAL-001"})
+    assert "```" not in contract
+
+
+def test_converse_extracts_text_around_reasoning_blocks_without_relaxing_json():
+    payload = json.dumps(validator_response())
+    class ShapedRuntime:
+        def __init__(self, blocks):
+            self.blocks = blocks
+            self.calls = []
+
+        def converse(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"stopReason": "end_turn", "output": {"message": {
+                "role": "assistant", "content": self.blocks}}}
+
+    rows = evaluations()
+    diagnosis = DiagnosticService(rows, synthetic_reasoner(rows))
+    hypothesis = asyncio.run(diagnosis.diagnose(diagnosis.list_signals()[0].signal_id)).provider_hypothesis
+    runtime = ShapedRuntime([{"reasoningContent": {"reasoningText": {"text": "private reasoning"}}},
+                             {"text": ""}, {"text": payload[:25]}, {"text": payload[25:]}])
+    diagnostics = []
+    service = EvidenceValidationService(diagnosis, BedrockEvidenceValidator(
+        client=runtime, diagnostic_sink=diagnostics.append))
+    assert asyncio.run(service.run(hypothesis.hypothesis_id)).validation_outcome == "supported"
+    assert len(runtime.calls) == 1
+    assert diagnostics[0]["content_shape"] == ["reasoningContent", "text", "text", "text"]
+    assert diagnostics[0]["json_syntax"] == "valid"
+    for blocks in ([{"text": ""}], [{"text": "```json\n" + payload + "\n```"}],
+                   [{"text": payload}, {"text": " extra"}],
+                   [{"toolUse": {"name": "unexpected"}}, {"text": payload}]):
+        runtime = ShapedRuntime(blocks)
+        service = EvidenceValidationService(diagnosis, BedrockEvidenceValidator(client=runtime))
+        with pytest.raises(ProviderOutputError, match="Validator returned invalid output"):
+            asyncio.run(service.run(hypothesis.hypothesis_id))
+        assert len(runtime.calls) == 1
+
+
+def test_smoke_diagnostic_reports_shape_without_model_text_or_aws_metadata():
+    secret = "arn:aws:sts::123456789012:assumed-role/secret"
+    response = {"stopReason": "end_turn", "ResponseMetadata": {"RequestId": secret},
+                "output": {"message": {"content": [
+                    {"reasoningContent": {"reasoningText": {"text": secret}}},
+                    {"text": "```json\n" + secret + "\n```"}]}}}
+    diagnostic = describe_validator_converse(response)
+    assert diagnostic == {"stop_reason": "end_turn", "content_shape": ["reasoningContent", "text"],
+                          "text_lengths": [len("```json\n" + secret + "\n```")],
+                          "text_envelope": "markdown_fence", "json_syntax": "invalid",
+                          "json_error_position": 0}
+    assert secret not in json.dumps(diagnostic)
 
 
 def test_prechecks_block_forged_and_cross_signal_citations_before_validator():

@@ -7,7 +7,7 @@ from enum import StrEnum
 from hashlib import sha256
 import json
 import re
-from typing import Literal, Protocol
+from typing import Callable, Literal, Protocol
 
 from pydantic import Field, ValidationError, field_validator
 
@@ -125,29 +125,44 @@ FIELD_GUIDANCE = {
                                    "contradict the proposal, including uncited passing evidence. "
                                    "A reference cannot appear in both reference lists.",
     "unsupported_claims": "Claims the proposal makes that the evidence does not establish, "
-                          "quoted or closely paraphrased. Use [] when there are none. "
+                          "quoted or closely paraphrased. ALWAYS a JSON array of strings, "
+                          "even for one claim; use [] when there are none. "
                           "unsupported requires at least one entry here or in "
                           "contradicting_reference_ids.",
     "missing_evidence": "Evidence that would be needed to establish or refute the causal claim. "
-                        "Use [] when nothing is missing. Must be non-empty for "
+                        "ALWAYS a JSON array of strings, even for one item; use [] when "
+                        "nothing is missing. Must be non-empty for "
                         "insufficient_evidence.",
-    "provider_reported_confidence": "ALWAYS a JSON number literal such as 0.35, never a string, "
-                                    "percentage, or qualitative label such as \"low\".",
+    "provider_reported_confidence": "ALWAYS a JSON number literal such as 0.35, never a string. "
+                                    "Qualitative labels such as \"low\", \"moderate\", \"high\", "
+                                    "\"low_to_moderate\", and percentages such as \"35%\" are invalid.",
+}
+
+RESPONSE_SHAPE_EXAMPLE = {
+    "validation_outcome": ValidationOutcome.SUPPORTED.value,
+    "support_assessment": "The observed defect is supported; the cause remains undetermined.",
+    "supported_reference_ids": ["SIGNAL-001"], "contradicting_reference_ids": [],
+    "unsupported_claims": [], "missing_evidence": ["Direct workflow observation"],
+    "provider_reported_confidence": 0.35,
 }
 
 
 def response_contract() -> str:
     schema = ValidatorResponse.model_json_schema()
-    lines = ["Output contract. Exactly these required keys, with no extras:"]
+    lines = ["Output contract. Return exactly one raw JSON object and nothing else: no markdown, "
+             "no code fences, and no prose, labels, or comments before or after it. The object "
+             "has exactly these seven keys, all required, and no other keys:"]
     for name, prop in schema["properties"].items():
         if "$ref" in prop:
             prop = schema["$defs"][prop["$ref"].rsplit("/", 1)[1]]
         lines.append(f'- "{name}": {_describe_type(prop)}. {FIELD_GUIDANCE[name]}')
     lines.append("All arrays remain JSON arrays, including single entries. Reference IDs must be copied "
                  "exactly from the supplied evidence population without duplicates. Confidence must be "
-                 "a JSON number, never a string or qualitative label. Do not output IDs, provider/model "
+                 "a JSON number, never a string or qualitative label. Do not output local IDs, provider/model "
                  "metadata, timestamps, or a replacement diagnosis. Malformed or incoherent output is "
                  "discarded without repair or retry.")
+    lines.append("Shape illustration with placeholder values (copy the types, not the values):")
+    lines.append(json.dumps(RESPONSE_SHAPE_EXAMPLE))
     return "\n".join(lines)
 
 
@@ -308,10 +323,13 @@ class BedrockEvidenceValidator:
     """Separate Converse invocation; only accepts a service-built allowlisted request."""
 
     def __init__(self, region: str = "us-east-1",
-                 model_id: str = "global.anthropic.claude-sonnet-4-6", *, client=None):
+                 model_id: str = "global.anthropic.claude-sonnet-4-6", *, client=None,
+                 diagnostic_sink: Callable[[dict], None] | None = None):
         self.region = region
         self.model_id = model_id
         self._client = client
+        # Only the synthetic smoke supplies a sink. No provider text or request data is sent.
+        self._diagnostic_sink = diagnostic_sink
 
     def _converse(self, request: dict):
         if self._client is None:
@@ -326,15 +344,62 @@ class BedrockEvidenceValidator:
 
     async def validate(self, request: dict) -> object:
         response = await asyncio.to_thread(self._converse, request)
+        if self._diagnostic_sink is not None:
+            self._diagnostic_sink(describe_validator_converse(response))
         if response.get("stopReason") != "end_turn":
             raise ProviderOutputError("invalid_validator_output", "Validator returned invalid output")
         try:
             blocks = response["output"]["message"]["content"]
-            if len(blocks) != 1 or set(blocks[0]) != {"text"}:
+            if not isinstance(blocks, list):
                 raise ValueError("Unexpected content")
-            return blocks[0]["text"]
+            texts = []
+            for block in blocks:
+                if not isinstance(block, dict) or len(block) != 1:
+                    raise ValueError("Unexpected content")
+                if "text" in block and isinstance(block["text"], str):
+                    texts.append(block["text"])
+                elif "reasoningContent" not in block:
+                    raise ValueError("Unexpected content")
+            if not texts or not any(text.strip() for text in texts):
+                raise ValueError("Empty content")
+            return "".join(texts)
         except (KeyError, TypeError, ValueError) as exc:
             raise ProviderOutputError("invalid_validator_output", "Validator returned invalid output") from exc
+
+
+def describe_validator_converse(response: object) -> dict:
+    """Smoke-only response shape and JSON syntax, without model text or AWS metadata."""
+    if not isinstance(response, dict):
+        return {"response_shape": "non_object"}
+    stop = response.get("stopReason")
+    known_stops = {"end_turn", "max_tokens", "tool_use", "stop_sequence", "guardrail_intervened",
+                   "content_filtered", "malformed_model_output", "malformed_tool_use",
+                   "model_context_window_exceeded"}
+    output = response.get("output")
+    message = output.get("message") if isinstance(output, dict) else None
+    blocks = message.get("content") if isinstance(message, dict) else None
+    diagnostic = {"stop_reason": stop if isinstance(stop, str) and stop in known_stops else "other",
+                  "content_shape": "non_array" if not isinstance(blocks, list) else
+                                   [next(iter(block)) if isinstance(block, dict) and len(block) == 1 and
+                                    next(iter(block)) in {"text", "reasoningContent", "toolUse"} else "other"
+                                    for block in blocks]}
+    if not isinstance(blocks, list):
+        return diagnostic
+    texts = [block["text"] for block in blocks if isinstance(block, dict) and
+             set(block) == {"text"} and isinstance(block["text"], str)]
+    payload = "".join(texts)
+    diagnostic["text_lengths"] = [len(value) for value in texts]
+    first = payload.lstrip()
+    diagnostic["text_envelope"] = ("empty" if not first else "markdown_fence" if first.startswith("```")
+                                   else "json_object_start" if first.startswith("{") else
+                                   "json_array_start" if first.startswith("[") else "prose_or_other")
+    try:
+        json.loads(payload)
+        diagnostic["json_syntax"] = "valid"
+    except json.JSONDecodeError as exc:
+        diagnostic["json_syntax"] = "invalid"
+        diagnostic["json_error_position"] = exc.pos
+    return diagnostic
 
 
 class EvidenceValidationService:
