@@ -1,4 +1,4 @@
-"""AWS-1 diagnostic adapter. Remote invocation is restricted to explicitly synthetic evidence.
+"""Bedrock diagnostic adapter with synthetic and trusted local ResultsCX gates.
 
 The M3 provider view is for local use and can contain confidential feedback. It must never
 be serialized into a Bedrock request. This module constructs a separate allowlisted payload.
@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from pydantic import Field, ValidationError
 
-from app.results_cx.models import Evaluation
+from app.results_cx.models import Domain, Evaluation
 
 from .engine import ProviderOutputError
 from .models import (CauseDomain, PerformanceDimension, ProviderEvidenceBundle,
@@ -31,7 +31,15 @@ supplied evidence references. Distinguish supporting from conflicting evidence, 
 missing evidence. Return undetermined when the evidence cannot distinguish causes. Do not
 automatically recommend training. A human validates the diagnosis afterward.
 Cite at least one supplied reference, including SIGNAL-001 when only aggregate evidence
-supports the observation."""
+supports the observation.
+Qualitative evaluator feedback may have been withheld from you by local policy.
+text_coverage states how many evidence items have local feedback and how many of those were
+withheld or blocked; absence of diagnostic_text never means no local feedback existed. Never
+invent, guess, or paraphrase withheld feedback. When the qualitative evidence you were given
+is insufficient to distinguish causes, lower provider_reported_confidence or return
+undetermined and name the missing evidence. diagnostic_text, when present, is locally
+minimized evaluator feedback in which [redacted] marks a suppressed staff name; treat it as
+an unnamed person. High failure rate alone does not establish a training need."""
 
 # Meaning of each response field. Types, enums, and bounds are NOT written here: they are
 # rendered from the BedrockResponse JSON schema so the prompt cannot drift from the validator.
@@ -115,6 +123,12 @@ SIGNAL_PAYLOAD_KEYS = frozenset({
     "score_rate"})
 ITEM_PAYLOAD_KEYS = frozenset({"reference", "domain", "criterion", "failed", "max_score",
                                "attained_score"})
+REAL_ITEM_PAYLOAD_KEYS = ITEM_PAYLOAD_KEYS | {"diagnostic_text"}
+TEXT_COVERAGE_KEYS = frozenset({"total_evidence_items", "evidence_items_with_feedback",
+                                "minimized_text_items_allowed", "text_items_blocked",
+                                "text_items_with_no_text"})
+_DOMAINS = frozenset(domain.value for domain in Domain)
+MAX_TEXT_LENGTH = 1000  # Mirrors evidence_policy; the validator must not import policy state.
 
 
 class BedrockResponse(StrictModel):
@@ -132,11 +146,11 @@ SYSTEM_PROMPT = REASONING_PROMPT + "\n\n" + response_contract()
 
 
 def provider_safe_payload(bundle: ProviderEvidenceBundle) -> tuple[dict, dict[str, tuple[str, str | None]]]:
-    """Project only structured synthetic facts and fresh opaque references.
+    """Project only structured facts and fresh opaque references.
 
     No feedback, free-text answer, local ID, lineage, name, filename, or sheet is copied.
-    Criterion wording is allowed only because the caller certifies synthetic input before
-    calling this function. The returned lookup stays local to restore M3 citations.
+    Synthetic callers certify their input. The real preparation path applies its criterion
+    policy before transmission. The returned lookup stays local to restore M3 citations.
     """
     signal = bundle.signal
     if (signal.evaluated_results != len(bundle.items) or
@@ -172,6 +186,48 @@ def provider_safe_payload(bundle: ProviderEvidenceBundle) -> tuple[dict, dict[st
     if set(payload["signal"]) != SIGNAL_PAYLOAD_KEYS or any(set(item) != ITEM_PAYLOAD_KEYS for item in items):
         raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
     return payload, lookup
+
+
+def validate_real_wire_payload(payload: dict) -> None:
+    """Fail closed if a new field appears in the real Converse request."""
+    if not isinstance(payload, dict):
+        raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
+    items = payload.get("evidence_items")
+    coverage = payload.get("text_coverage")
+    if (set(payload) != {"signal", "evidence_items", "text_coverage"} or
+            not isinstance(payload["signal"], dict) or
+            set(payload["signal"]) != SIGNAL_PAYLOAD_KEYS or
+            not isinstance(items, list) or not isinstance(coverage, dict) or
+            set(coverage) != TEXT_COVERAGE_KEYS):
+        raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
+    signal = payload["signal"]
+    signal_strings = {"reference", "domain", "criterion", "failure_rate", "pass_rate",
+                      "feedback_coverage", "max_score_total", "attained_score_total", "score_rate"}
+    if (signal["reference"] != "SIGNAL-001" or
+            any(not isinstance(signal[key], str) for key in signal_strings) or
+            signal["domain"] not in _DOMAINS or len(signal["criterion"]) > MAX_TEXT_LENGTH or
+            any(type(signal[key]) is not int or signal[key] < 0 for key in SIGNAL_PAYLOAD_KEYS - signal_strings) or
+            any(type(coverage[key]) is not int or coverage[key] < 0 for key in TEXT_COVERAGE_KEYS) or
+            coverage["total_evidence_items"] != len(items) or
+            sum(coverage[key] for key in ("minimized_text_items_allowed", "text_items_blocked",
+                                            "text_items_with_no_text")) != len(items) or
+            coverage["evidence_items_with_feedback"] != signal["feedback_count"]):
+        raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
+    for number, item in enumerate(items, 1):
+        if (not isinstance(item, dict) or set(item) not in (ITEM_PAYLOAD_KEYS, REAL_ITEM_PAYLOAD_KEYS) or
+                item["reference"] != f"EVID-{number:03d}" or
+                any(not isinstance(item[key], str) for key in ("domain", "criterion", "max_score",
+                                                               "attained_score")) or
+                item["domain"] not in _DOMAINS or item["domain"] != signal["domain"] or
+                item["criterion"] != signal["criterion"] or type(item["failed"]) is not bool):
+            raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
+        if "diagnostic_text" in item and (not isinstance(item["diagnostic_text"], dict) or
+                                          set(item["diagnostic_text"]) != {"kind", "text"} or
+                                          item["diagnostic_text"]["kind"] != "minimized_evaluator_feedback" or
+                                          not isinstance(item["diagnostic_text"]["text"], str) or
+                                          not item["diagnostic_text"]["text"] or
+                                          len(item["diagnostic_text"]["text"]) > MAX_TEXT_LENGTH):
+            raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
 
 
 def parse_response(text: str, lookup: dict[str, tuple[str, str | None]]) -> dict:
@@ -210,11 +266,9 @@ def parse_response(text: str, lookup: dict[str, tuple[str, str | None]]) -> dict
 class BedrockReasoner:
     """Converse adapter. The public constructor always refuses remote invocation.
 
-    Remote invocation exists only for evidence built from the exact in-memory synthetic
-    evaluations handed to `for_synthetic_evaluations`. The reasoner refuses any bundle whose
-    evaluation identifiers or loaded population differ from that set, so a synthetic-bound
-    reasoner attached to a service holding other records still sends nothing. No setting,
-    environment variable, or API input creates or unlocks the binding.
+    A bound synthetic population or strict local workbook provenance is required. The real
+    path rechecks the local bundle and prepares its own provider-safe projection. No API
+    input or environment variable can self-assert that arbitrary evidence is safe.
     """
 
     def __init__(self, region: str = "us-east-1",
@@ -223,6 +277,8 @@ class BedrockReasoner:
         self.model_id = model_id
         self._client = client
         self._synthetic_evaluation_ids: frozenset[str] | None = None
+        self._trusted_evaluations: list[Evaluation] | None = None
+        self._trusted_digest: str | None = None
 
     @classmethod
     def for_synthetic_evaluations(cls, region: str, model_id: str,
@@ -238,9 +294,26 @@ class BedrockReasoner:
         reasoner._synthetic_evaluation_ids = ids
         return reasoner
 
+    @classmethod
+    def for_trusted_results_cx(cls, region: str, model_id: str, evaluations: list[Evaluation],
+                               *, client=None) -> "BedrockReasoner":
+        from app.results_cx.demo import TrustedResultsCXEvaluations
+
+        if type(evaluations) is not TrustedResultsCXEvaluations or not evaluations:
+            raise ValueError("Real remote diagnosis requires trusted local workbook provenance")
+        evaluations.verify()
+        reasoner = cls(region, model_id, client=client)
+        # A private deep copy plus the loader's digest: later mutation of the caller's objects
+        # cannot change what is sent, and in-place mutation of this copy is refused at use.
+        reasoner._trusted_evaluations = [evaluation.model_copy(deep=True) for evaluation in evaluations]
+        reasoner._trusted_digest = evaluations.content_digest
+        return reasoner
+
     @property
     def remote_invocation_policy(self) -> str:
         """Read by `/diagnostics/mode` from the object; see `engine.remote_invocation_policy`."""
+        if self._trusted_evaluations is not None:
+            return "real_minimized"
         return "privacy_blocked" if self._synthetic_evaluation_ids is None else "synthetic_only"
 
     def _permits(self, bundle: ProviderEvidenceBundle) -> bool:
@@ -266,10 +339,33 @@ class BedrockReasoner:
         )
 
     async def diagnose(self, evidence_bundle: ProviderEvidenceBundle) -> object:
-        if not self._permits(evidence_bundle):
-            raise ProviderOutputError("provider_privacy_blocked",
-                                      "Remote diagnosis is disabled for non-synthetic evidence")
-        payload, lookup = provider_safe_payload(evidence_bundle)
+        if self._trusted_evaluations is not None:
+            from .engine import build_bundle, detect_signals
+            from .evidence_policy import population_digest, prepare_real_evidence
+
+            evaluations = self._trusted_evaluations
+            if population_digest(evaluations) != self._trusted_digest:
+                raise ProviderOutputError("provider_privacy_blocked", "Remote diagnosis privacy policy blocked")
+            signal = next((s for s in detect_signals(evaluations)
+                           if s.signal_id == evidence_bundle.signal.signal_id), None)
+            if signal is None:
+                raise ProviderOutputError("provider_privacy_blocked", "Remote diagnosis privacy policy blocked")
+            local = build_bundle(signal, evaluations)
+            identities = {name for e in evaluations for name in (e.agent_name, e.qa_name, e.team_leader)}
+            if local.provider_view(identities) != evidence_bundle:
+                raise ProviderOutputError("provider_privacy_blocked", "Remote diagnosis privacy policy blocked")
+            # Structured only in this milestone: no keyword is passed here, so the module
+            # default decides and nothing outside this code path can turn real text on.
+            prepared = prepare_real_evidence(local, evaluations)
+            payload, lookup = prepared.payload, prepared.lookup
+            validate_real_wire_payload(payload)
+            if any("diagnostic_text" in item for item in payload["evidence_items"]):
+                raise ProviderOutputError("provider_privacy_blocked", "Remote diagnosis privacy policy blocked")
+        else:
+            if not self._permits(evidence_bundle):
+                raise ProviderOutputError("provider_privacy_blocked",
+                                          "Remote diagnosis is disabled for non-synthetic evidence")
+            payload, lookup = provider_safe_payload(evidence_bundle)
         try:
             response = await asyncio.to_thread(self._converse, payload)
             # A truncated, filtered, or guardrail-stopped turn is refused even when its text

@@ -222,7 +222,7 @@ def provider_kind(provider: object) -> str:
 # What an installed provider object declares about sending evidence off-process. Values a
 # provider may declare about itself; anything else is reported as undeclared, so a provider
 # cannot invent a reassuring label through this route.
-REMOTE_POLICIES = frozenset({"privacy_blocked", "synthetic_only"})
+REMOTE_POLICIES = frozenset({"privacy_blocked", "synthetic_only", "real_minimized"})
 
 
 def remote_invocation_policy(provider: object) -> str:
@@ -246,7 +246,7 @@ def stamp_generation_mode(hypothesis: DiagnosticHypothesis, provider: object) ->
 # each. Any other reasoner exception, including a ProviderOutputError with an unknown code,
 # is reported as a generic failure so provider-authored text never reaches a response.
 PROVIDER_ERROR_MESSAGES = {
-    "provider_privacy_blocked": "Remote diagnosis is disabled for non-synthetic evidence",
+    "provider_privacy_blocked": "Remote diagnosis privacy policy blocked",
     "invalid_provider_input": "Diagnostic evidence is inconsistent",
     "invalid_provider_output": "Reasoner returned an invalid hypothesis",
     "invalid_evidence_reference": "Evidence citation is outside this bundle",
