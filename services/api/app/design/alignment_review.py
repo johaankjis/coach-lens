@@ -177,10 +177,12 @@ def build_alignment_view(result: DesignResult, qa_criterion: str) -> AlignmentVi
     if design is None:
         raise AlignmentReviewError("no_training_design")
     decision = result.intervention
-    if (decision.intervention_type is None or decision.recommendation is None or
+    if (result.generation_mode != "provider" or result.status != "ready_for_alignment_review" or
+            design.design_basis is None or
+            decision.intervention_type is None or decision.recommendation is None or
             decision.target_change is None or decision.intervention_id is None or
             decision.solution_validation_id is None):
-        # A fixture decision carries no validated intervention to align against.
+        # Review only an integrated AWS-5 package with its validated intervention.
         raise AlignmentReviewError("alignment_review_not_permitted")
     prefix = design.run_id + "/"
     elements: dict[str, tuple[str, str]] = {}
@@ -377,15 +379,18 @@ def parse_alignment_response(text: str, view: AlignmentView) -> AlignmentRespons
     all_aligned = all(outcome == "aligned" for outcome in applicable)
     overall = result.overall_outcome
     # An outcome must be grounded in what the review itself names, as in AWS-4.
-    if overall == "aligned" and (not all_aligned or any_misaligned_element or result.unsupported_assumptions):
+    if overall == "aligned" and (not all_aligned or any_misaligned_element or
+                                 result.unsupported_assumptions or result.missing_information):
         raise AlignmentOutputError("invalid_alignment_output")
     if overall == "partially_aligned" and (
-            "aligned" not in applicable or
-            (all_aligned and not result.unsupported_assumptions and not result.missing_information)):
+            "misaligned" in applicable or "insufficient_information" in applicable or
+            result.missing_information or
+            (all_aligned and not result.unsupported_assumptions)):
         raise AlignmentOutputError("invalid_alignment_output")
     if overall == "misaligned" and "misaligned" not in applicable:
         raise AlignmentOutputError("invalid_alignment_output")
-    if overall == "insufficient_information" and not result.missing_information:
+    if overall == "insufficient_information" and ("misaligned" in applicable or
+                                                   not result.missing_information):
         raise AlignmentOutputError("invalid_alignment_output")
     return result
 

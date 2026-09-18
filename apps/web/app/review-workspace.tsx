@@ -455,7 +455,7 @@ export default function ReviewWorkspace() {
     const runId = designResult.run_id;
     let cancelled = false;
     api(`/diagnoses/${encodeURIComponent(id)}/alignment-review`, isAlignmentReview, undefined, "designs")
-      .then((result) => { if (!cancelled && result.diagnosis_id === id && result.run_id === runId) setAlignmentReview(result); })
+      .then((result) => { if (!cancelled && recordRef.current === id && result.diagnosis_id === id && result.run_id === runId) setAlignmentReview(result); })
       .catch((cause) => { if (!cancelled && (!(cause instanceof ApiError) || cause.status !== 404)) setError((cause as Error).message); });
     return () => { cancelled = true; };
   }, [designResult]);
@@ -1167,7 +1167,7 @@ export default function ReviewWorkspace() {
                               </>}
                               {designing && <p role="status">Designing intervention and learning experience…</p>}
                               {designResult && <DesignWorkspace result={designResult} signalLabel={selectedSignal.criterion}
-                                alignmentReview={alignmentReview} checkingAlignment={checkingAlignment}
+                                alignmentReview={alignmentReview?.diagnosis_id === recordId ? alignmentReview : null} checkingAlignment={checkingAlignment}
                                 alignmentDisabled={busy} onCheckAlignment={() => void checkAlignment()} />}
                             </>
                           ) : record.status === "rejected" ? (

@@ -125,6 +125,6 @@ export function isAlignmentReview(v: unknown): v is AlignmentReview {
   if (typeof v.provider_reported_confidence !== "number" || !Number.isFinite(v.provider_reported_confidence) || v.provider_reported_confidence < 0 || v.provider_reported_confidence > 1) return false;
   if (!metadata(v.provider_metadata)) return false;
   // An aligned verdict cannot name a misaligned element, an unsupported assumption, or a non-aligned dimension.
-  if (v.overall_outcome === "aligned" && (v.misaligned_element_ids.length > 0 || v.unsupported_assumptions.length > 0 || ALIGNMENT_DIMENSIONS.some((name) => !["aligned", "not_applicable"].includes((v.dimensions as Record<string, DimensionReview>)[name].outcome)))) return false;
+  if (v.overall_outcome === "aligned" && (v.misaligned_element_ids.length > 0 || v.unsupported_assumptions.length > 0 || v.missing_information.length > 0 || ALIGNMENT_DIMENSIONS.some((name) => !["aligned", "not_applicable"].includes((v.dimensions as Record<string, DimensionReview>)[name].outcome)))) return false;
   return true;
 }

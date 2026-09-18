@@ -70,9 +70,12 @@ the supplied material cannot settle the question; name what is missing. Name eve
 that drifts in that dimension's misaligned_element_ids. An operational fact the package relies
 on that neither the gap, the intervention, nor the supplied operational context establishes is
 an unsupported assumption; a declared [PLACEHOLDER] is not. Overall aligned requires every
-applicable dimension aligned, no misaligned elements, and no unsupported assumptions; overall
-misaligned requires at least one misaligned dimension; overall insufficient_information
-requires missing_information. Confidence measures how strongly the supplied material supports
+applicable dimension aligned, no misaligned elements, and no unsupported assumptions or missing
+information; overall misaligned requires at least one misaligned dimension; overall
+insufficient_information requires missing_information and no misaligned dimension. Overall
+partially_aligned requires a partially aligned dimension or an unsupported assumption, and no
+misaligned or insufficient dimension or missing information. Confidence measures how strongly
+the supplied material supports
 your outcome, not how polished the package reads. Never assert or imply human approval of the
 package. Return exactly one JSON object, no markdown or surrounding prose."""
 

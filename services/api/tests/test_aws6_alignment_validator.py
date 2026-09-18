@@ -173,16 +173,22 @@ def test_case_b_wrong_target_behavior_is_questioned_even_though_references_are_v
     ("objective_to_knowledge_check", ["K1"], ["/K1"]),                     # knowledge check assesses recall
     ("intervention_to_package", ["A2", "O1"], ["/A2", "/O1"]),             # package drifts from the intervention
 ])
-@pytest.mark.parametrize("overall", ["misaligned", "partially_aligned"])
-def test_case_cdef_questioned_links_resolve_to_stored_elements(name, labels, suffixes, overall):
-    svc, _, _, result, _ = reviewed(questioned(name, labels, overall))
+def test_case_cdef_questioned_links_resolve_to_stored_elements(name, labels, suffixes):
+    svc, _, _, result, _ = reviewed(questioned(name, labels))
     stored = review(svc)
-    assert stored.design_status == "design_questioned" and stored.overall_outcome == overall
+    assert stored.design_status == "design_questioned" and stored.overall_outcome == "misaligned"
     assert getattr(stored.dimensions, name).misaligned_element_ids == tuple(result.run_id + s for s in suffixes)
     assert stored.misaligned_element_ids == tuple(result.run_id + s for s in suffixes)
     for other in DIMENSIONS:
         if other != name:
             assert getattr(stored.dimensions, other).outcome == "aligned"
+
+
+def test_partially_aligned_dimension_yields_a_questioned_partial_review():
+    svc, _, _, _, _ = reviewed(alignment_response(
+        "partially_aligned", objective_to_activity=dimension("partially_aligned", ["A1"])))
+    stored = review(svc)
+    assert stored.overall_outcome == "partially_aligned" and stored.design_status == "design_questioned"
 
 
 # --- G: unsupported operational assumption -> questioned / flagged -------------------------------
@@ -216,6 +222,11 @@ def test_case_h_missing_information_is_insufficient_information_and_questioned()
     lambda r: r.update(overall_outcome="misaligned"),                      # nothing misaligned
     lambda r: r.update(overall_outcome="partially_aligned"),               # nothing questioned at all
     lambda r: r.update(overall_outcome="partially_aligned", dimensions={n: dimension("misaligned", ["B1"] if n == "gap_to_target_behavior" else []) for n in DIMENSIONS}),
+    lambda r: r.update(missing_information=["Missing policy detail."]),
+    lambda r: r.update(overall_outcome="partially_aligned", missing_information=["Missing policy detail."]),
+    lambda r: r.update(overall_outcome="partially_aligned", dimensions=r["dimensions"] | {"objective_to_activity": dimension("misaligned", ["A1"])}),
+    lambda r: r.update(overall_outcome="partially_aligned", dimensions=r["dimensions"] | {"objective_to_activity": dimension("insufficient_information")}),
+    lambda r: r.update(overall_outcome="insufficient_information", missing_information=["Missing policy detail."], dimensions=r["dimensions"] | {"objective_to_activity": dimension("misaligned", ["A1"])}),
     lambda r: r["dimensions"]["gap_to_target_behavior"].update(outcome="aligned", misaligned_element_ids=["B1"]),
     lambda r: r["dimensions"]["objective_to_knowledge_check"].update(outcome="not_applicable"),  # the package has a check
     lambda r: r["dimensions"]["practice_to_rubric"].update(outcome="not_applicable"),
@@ -584,6 +595,11 @@ def test_review_requires_a_stored_training_package_from_the_aws4_handoff():
     svc = AlignmentReviewService(fixture_service, ControlledAlignmentValidator(alignment_response()))
     refused(svc, "alignment_review_not_permitted")
     assert svc.validator.requests == []
+    # A fixture-shaped result cannot reuse valid AWS-4 fields to look integrated.
+    provider_svc, provider_validator, provider_designs, integrated, _ = reviewed()
+    provider_designs._results["hyp_1"] = integrated.model_copy(update={"generation_mode": "controlled_fixture"})
+    refused(provider_svc, "alignment_review_not_permitted")
+    assert provider_validator.requests == []
     prior = install(svc)
     try:
         with TestClient(app) as client:
@@ -596,7 +612,7 @@ def test_review_requires_a_stored_training_package_from_the_aws4_handoff():
 
 
 def test_api_reads_and_writes_follow_the_design_router_conventions():
-    svc, _, _, result, _ = reviewed(questioned("practice_to_rubric", ["R1"], "partially_aligned"))
+    svc, _, _, result, _ = reviewed(questioned("practice_to_rubric", ["R1"]))
     prior = install(svc)
     try:
         with TestClient(app) as client:
@@ -605,7 +621,7 @@ def test_api_reads_and_writes_follow_the_design_router_conventions():
             created = client.post("/designs/diagnoses/hyp_1/alignment-review")
             assert created.status_code == 200
             body = created.json()
-            assert body["design_status"] == "design_questioned" and body["overall_outcome"] == "partially_aligned"
+            assert body["design_status"] == "design_questioned" and body["overall_outcome"] == "misaligned"
             assert body["misaligned_element_ids"] == [result.run_id + "/R1"]
             assert body["structural_trace"] == "structural_references_only"
             assert body["provider_metadata"]["generation_mode"] == "controlled_fixture"

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DesignWorkspace from "../app/design-workspace";
 import ReviewWorkspace from "../app/review-workspace";
@@ -43,6 +43,7 @@ describe("AWS-6 alignment review guard", () => {
     expect(isAlignmentReview({ ...base, assessed: "diagnosis" })).toBe(false);
     expect(isAlignmentReview({ ...base, misaligned_element_ids: [`${run}/A1`] })).toBe(false); // aligned names nothing
     expect(isAlignmentReview({ ...base, unsupported_assumptions: ["x"] })).toBe(false);
+    expect(isAlignmentReview({ ...base, missing_information: ["x"] })).toBe(false);
     expect(isAlignmentReview({ ...base, dimensions: { ...base.dimensions, practice_to_rubric: { outcome: "misaligned", assessment: "x", misaligned_element_ids: [] } } })).toBe(false);
     expect(isAlignmentReview({ ...base, dimensions: { ...base.dimensions, practice_to_rubric: undefined } })).toBe(false);
     expect(isAlignmentReview({ ...base, dimensions: { ...base.dimensions, gap_to_target_behavior: { outcome: "aligned", assessment: "x", misaligned_element_ids: [`${run}/B1`] } } })).toBe(false);
@@ -174,6 +175,61 @@ describe("AWS-6 alignment check in the review workspace", () => {
     expect(await screen.findByText("DESIGN QUESTIONED · Misaligned")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "CHECK ALIGNMENT" })).not.toBeInTheDocument();
     expect(screen.queryByText("READY FOR ALIGNMENT REVIEW")).not.toBeInTheDocument();
+  });
+
+  it("does not render a late stored review under a different hypothesis", async () => {
+    let completeA!: (value: Response) => void;
+    const pendingA = new Promise<Response>((resolve) => { completeA = resolve; });
+    const secondRecord = JSON.parse(JSON.stringify(approved).replaceAll("hyp_1", "hyp_2")) as RecordState;
+    const secondDesign = JSON.parse(JSON.stringify(designFixture()).replaceAll("hyp_1", "hyp_2").replaceAll("design_1", "design_2"));
+    const secondIntervention = JSON.parse(JSON.stringify(interventionFixture()).replaceAll("hyp_1", "hyp_2"));
+    const secondReview = alignmentReview({ diagnosis_id: "hyp_2", run_id: "design_2", overall_assessment: "Review for hypothesis B." });
+    const mock = vi.fn(async (path: string) => {
+      if (path.endsWith("/signals")) return reply([signal]);
+      if (path.endsWith("/review-evidence")) return reply(evidence);
+      if (path.endsWith("/hypotheses")) return reply([approved, secondRecord]);
+      if (path.endsWith("/evidence-validation")) return reply({}, 404);
+      if (path.endsWith("/alignment-review")) return path.includes("hyp_1") ? pendingA : reply(secondReview);
+      if (path.includes("/api/designs/")) return reply(path.includes("hyp_1") ? designFixture() : secondDesign);
+      if (path.includes("/api/interventions/")) return reply(path.includes("hyp_1") ? interventionFixture() : secondIntervention);
+      throw new Error(`Unexpected route ${path}`);
+    });
+    vi.stubGlobal("fetch", mock);
+    render(<ReviewWorkspace />);
+    await waitFor(() => expect(mock.mock.calls.some(([path]) => String(path).includes("hyp_1/alignment-review"))).toBe(true));
+    fireEvent.change(screen.getByLabelText("Review history"), { target: { value: "hyp_2" } });
+    expect(await screen.findByText("Review for hypothesis B.")).toBeInTheDocument();
+    await act(async () => { completeA(reply(alignmentReview({ overall_assessment: "Review for hypothesis A." }))); });
+    expect(screen.queryByText("Review for hypothesis A.")).not.toBeInTheDocument();
+    expect(screen.getByText("Review for hypothesis B.")).toBeInTheDocument();
+  });
+
+  it("does not render a late stored review after switching signals", async () => {
+    let completeA!: (value: Response) => void;
+    const pendingA = new Promise<Response>((resolve) => { completeA = resolve; });
+    const secondSignal = { ...signal, signal_id: "sig_2", criterion: "Another criterion" };
+    const secondRecord = JSON.parse(JSON.stringify(approved).replaceAll("hyp_1", "hyp_2").replaceAll("sig_1", "sig_2")) as RecordState;
+    const secondDesign = JSON.parse(JSON.stringify(designFixture()).replaceAll("hyp_1", "hyp_2").replaceAll("sig_1", "sig_2").replaceAll("design_1", "design_2"));
+    const secondIntervention = JSON.parse(JSON.stringify(interventionFixture()).replaceAll("hyp_1", "hyp_2").replaceAll("sig_1", "sig_2"));
+    const secondReview = alignmentReview({ diagnosis_id: "hyp_2", run_id: "design_2", overall_assessment: "Review for signal B." });
+    const mock = vi.fn(async (path: string) => {
+      if (path.endsWith("/signals")) return reply([signal, secondSignal]);
+      if (path.endsWith("/review-evidence")) return reply(path.includes("sig_2") ? { ...evidence, signal: secondSignal } : evidence);
+      if (path.endsWith("/hypotheses")) return reply(path.includes("sig_2") ? [secondRecord] : [approved]);
+      if (path.endsWith("/evidence-validation")) return reply({}, 404);
+      if (path.endsWith("/alignment-review")) return path.includes("hyp_1") ? pendingA : reply(secondReview);
+      if (path.includes("/api/designs/")) return reply(path.includes("hyp_1") ? designFixture() : secondDesign);
+      if (path.includes("/api/interventions/")) return reply(path.includes("hyp_1") ? interventionFixture() : secondIntervention);
+      throw new Error(`Unexpected route ${path}`);
+    });
+    vi.stubGlobal("fetch", mock);
+    render(<ReviewWorkspace />);
+    await waitFor(() => expect(mock.mock.calls.some(([path]) => String(path).includes("hyp_1/alignment-review"))).toBe(true));
+    fireEvent.click(screen.getByText("Another criterion"));
+    expect(await screen.findByText("Review for signal B.")).toBeInTheDocument();
+    await act(async () => { completeA(reply(alignmentReview({ overall_assessment: "Review for signal A." }))); });
+    expect(screen.queryByText("Review for signal A.")).not.toBeInTheDocument();
+    expect(screen.getByText("Review for signal B.")).toBeInTheDocument();
   });
 
   it("requests one review despite repeated clicks and shows the stored verdict", async () => {
