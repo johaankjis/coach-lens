@@ -308,6 +308,10 @@ export async function api<T>(
       intervention_not_proposed: "Propose and validate an intervention before design.",
       solution_not_validated: "Validate the proposed intervention before design.",
       training_design_withheld: "Training design is withheld because the solution review questioned the proposed training.",
+      solution_questioned: "The solution review questioned this intervention. Start a new diagnosis review before design.",
+      training_design_not_permitted: "Training design requires an aligned AWS-4 training or practice intervention.",
+      training_design_refused: "The training designer could not use this validated intervention.",
+      design_privacy_blocked: "The training design privacy check blocked the provider request.",
       intervention_stale: "The stored intervention no longer matches the validated diagnosis. Refresh the diagnosis.",
     };
     throw new ApiError(

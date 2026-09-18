@@ -245,7 +245,23 @@ def test_case_l_provider_designer_cannot_be_driven_by_a_fixture_decision():
                       "training_design_gate": "awaiting_solution_validation"},
                      {"training_design_gate": None}, {"intervention_id": None},
                      {"recommendation": None}, {"target_change": None}):
-        assert not training_design_permitted(InterventionDecision.model_validate(decision.model_dump() | weakened))
+        with pytest.raises(ValueError):
+            InterventionDecision.model_validate(decision.model_dump() | weakened)
+
+
+def test_partial_aws4_provenance_cannot_validate_as_a_fixture_decision():
+    _, interventions, designs, _, _ = pipeline("training")
+    context = designs._context("hyp_1")
+    integrated = decision_from_record(interventions.get("hyp_1"), context)
+    fixture = dict(integrated)
+    for field in ("intervention_type", "recommendation", "target_change", "solution_alignment",
+                  "intervention_id", "solution_validation_id", "training_design_gate"):
+        fixture[field] = None
+    assert InterventionDecision.model_validate(fixture).intervention_id is None
+    for field in ("intervention_type", "recommendation", "target_change", "solution_alignment",
+                  "intervention_id", "solution_validation_id", "training_design_gate"):
+        with pytest.raises(ValueError):
+            InterventionDecision.model_validate(fixture | {field: integrated[field]})
 
 
 def test_case_o_fixture_path_is_fixture_only_and_the_m4_demo_stays_on_it():

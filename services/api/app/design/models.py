@@ -116,6 +116,11 @@ class InterventionDecision(FrozenModel):
             if self.training_design_gate != expected_training_design_gate(self.intervention_type,
                                                                            self.solution_alignment):
                 raise ValueError("Training design gate disagrees with the solution outcome")
+        handoff_fields = (self.intervention_type, self.recommendation, self.target_change,
+                          self.solution_alignment, self.intervention_id, self.solution_validation_id,
+                          self.training_design_gate)
+        if any(field is not None for field in handoff_fields) and any(field is None for field in handoff_fields):
+            raise ValueError("Solution-validated intervention fields must travel together")
         return self
 
 
