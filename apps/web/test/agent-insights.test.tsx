@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AgentInsightsPage from "../app/agent-insights/page";
+import ReviewWorkspace from "../app/review-workspace";
 import { awaiting, secondSignal, topSignal } from "./home.test-fixture";
 
 function reply(value: unknown, status = 200): Response {
@@ -50,9 +51,20 @@ describe("Agent Insights route", () => {
   });
 
   it("falls back to the backend's first signal when the requested one does not exist", async () => {
-    route();
+    const mock = route();
     await page({ signal: "sig_missing" });
     expect(await screen.findByText("Agents close calls without confirming the next step.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Requested signal is unavailable");
+    expect(mock).not.toHaveBeenCalledWith(expect.stringContaining("/signals/sig_missing/review-evidence"), expect.anything());
     expect(screen.queryByText("Evidence unavailable")).not.toBeInTheDocument();
+  });
+
+  it("follows a new valid signal link while Agent Insights remains mounted", async () => {
+    route();
+    const view = render(<ReviewWorkspace initialSignalId="sig_top" />);
+    expect(await screen.findByText("Agents close calls without confirming the next step.")).toBeInTheDocument();
+    view.rerender(<ReviewWorkspace initialSignalId="sig_second" />);
+    expect(await screen.findByRole("heading", { level: 2, name: "HIPAA verification" })).toBeInTheDocument();
+    expect(await screen.findByText("No hypothesis for this signal yet.")).toBeInTheDocument();
   });
 });

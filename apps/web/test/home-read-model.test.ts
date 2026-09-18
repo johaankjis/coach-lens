@@ -35,7 +35,7 @@ describe("Home read-model builder", () => {
     });
     expect(model.gaps[0].failRateFraction).toBeCloseTo(0.5833);
     const priority = model.summary.find((metric) => metric.id === "priority")!;
-    expect(priority.reading).toMatchObject({ state: "available", value: "2" });
+    expect(priority.reading).toMatchObject({ state: "pending", reason: expect.stringContaining("not classified") });
   });
 
   it("caps the gap list at five while reporting the full observed count", () => {
@@ -63,7 +63,7 @@ describe("Home read-model builder", () => {
     const model = buildHomeReadModel(sources({ signals: [], priority: null, mode: { ...realMode, evaluation_count: 0, signal_count: 0 } }));
     expect(model.priority).toBeNull();
     expect(model.gaps).toEqual([]);
-    expect(model.summary.find((metric) => metric.id === "priority")!.reading).toMatchObject({ state: "unavailable" });
+    expect(model.summary.find((metric) => metric.id === "priority")!.reading).toMatchObject({ state: "pending", note: "0 observed criteria loaded" });
   });
 
   it("separates fixture, real, and unknown provenance", () => {
@@ -80,7 +80,7 @@ describe("Home read-model builder", () => {
       signalId: "sig_top",
       criterion: "Resolution clarity",
       domain: "Member Experience",
-      failure: { failCount: 7, evaluatedResults: 12, failRateLabel: "58.3%", affectedEvaluations: 3, feedbackCount: 9 },
+      failure: { failCount: 7, evaluatedResults: 12, failRateLabel: "58.3%", feedbackCount: 9 },
       humanValidation: { state: "awaiting_review" },
       evidenceReview: { state: "not_run" },
       reviewHref: "/agent-insights?signal=sig_top",
@@ -100,7 +100,7 @@ describe("Home read-model builder", () => {
   it("recognizes a controlled fixture record as non-AI", () => {
     const model = buildHomeReadModel(sources({ priority: { signal: topSignal, record: fixtureRecord, validation: validatedReview, design: null } }));
     expect(model.priority!.diagnosis).toMatchObject({ state: "proposed", origin: "fixture" });
-    expect(model.priority!.evidenceReview).toMatchObject({ state: "evidence_validated", origin: "fixture" });
+    expect(model.priority!.evidenceReview).toMatchObject({ state: "evidence_validated" });
   });
 
   it("reports no diagnosis when none was requested", () => {
@@ -110,6 +110,11 @@ describe("Home read-model builder", () => {
     expect(model.priority!.humanValidation.state).toBe("none");
     expect(model.priority!.evidence).toBeNull();
     expect(model.priority!.nextStep.label).toBe("Request diagnostic hypothesis");
+  });
+
+  it("does not recommend diagnosis from an all-pass criterion", () => {
+    const model = buildHomeReadModel(sources({ priority: { signal: cleanSignal, record: null, validation: null, design: null } }));
+    expect(model.priority!.nextStep).toMatchObject({ label: "Inspect observed criterion", detail: expect.stringContaining("No failed results") });
   });
 
   it("maps validated and questioned semantic reviews and ignores a review for another hypothesis", () => {

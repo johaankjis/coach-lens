@@ -31,9 +31,9 @@ describe("Command Center view from a typed read-model", () => {
     render(<CommandCenterView model={buildHomeReadModel(sources())} />);
     expect(screen.getByRole("heading", { level: 1, name: "What needs attention across the team?" })).toBeInTheDocument();
     const priority = screen.getByRole("article", { name: "Priority issues" });
-    expect(within(priority).getByText("2")).toBeInTheDocument();
-    expect(within(priority).getByText(/of 3 observed criteria have failed results/)).toBeInTheDocument();
-    const gaps = screen.getByRole("region", { name: "Top performance gaps" });
+    expect(within(priority).getByText("Pending")).toBeInTheDocument();
+    expect(within(priority).getByText(/backend has not classified or prioritized issues/)).toBeInTheDocument();
+    const gaps = screen.getByRole("region", { name: "Observed QA criteria" });
     const rows = within(gaps).getAllByRole("listitem");
     expect(rows).toHaveLength(3);
     expect(within(rows[0]).getByRole("link", { name: "Resolution clarity" })).toHaveAttribute("href", "/agent-insights?signal=sig_top");
@@ -46,10 +46,10 @@ describe("Command Center view from a typed read-model", () => {
   it("shows an explicit no-data state without a priority insight", () => {
     render(<CommandCenterView model={buildHomeReadModel(sources({ signals: [], priority: null, mode: { ...realMode, evaluation_count: 0, signal_count: 0 } }))} />);
     expect(screen.getByText("No QA signals are loaded.")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Nothing to prioritize yet" })).toBeInTheDocument();
-    expect(within(screen.getByRole("article", { name: "Priority issues" })).getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No observed criteria yet" })).toBeInTheDocument();
+    expect(within(screen.getByRole("article", { name: "Priority issues" })).getByText("Pending")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Agent Insights" })).toHaveAttribute("href", "/agent-insights");
-    expect(screen.queryByRole("link", { name: "Review Evidence & Validate" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Continue in Agent Insights" })).not.toBeInTheDocument();
   });
 
   it("presents the priority insight as a working diagnosis with non-calibrated confidence and no training conclusion", () => {
@@ -88,7 +88,7 @@ describe("Command Center view from a typed read-model", () => {
     const questionedPill = within(field("Evidence review")).getByText("Evidence questioned · Unsupported");
     expect(questionedPill).toHaveClass("caution");
     expect(questionedPill).not.toHaveClass("rejected");
-    expect(within(field("Evidence review")).getByText(/Not a human decision/)).toBeInTheDocument();
+    expect(within(field("Evidence review")).getByText(/Not a human decision/i)).toBeInTheDocument();
     expect(screen.getByText("The cited failures do not establish a skill gap.")).toBeInTheDocument();
     expect(screen.getByText(/1 claim beyond the evidence · 1 evidence gap noted/)).toBeInTheDocument();
     expect(within(field("Human validation")).getByText("Awaiting human review")).toBeInTheDocument();
@@ -113,7 +113,7 @@ describe("Command Center view from a typed read-model", () => {
 
   it("routes the primary CTA into the existing analysis workspace on the summarized signal", () => {
     render(<CommandCenterView model={buildHomeReadModel(sources({ priority: { signal: secondSignal, record: null, validation: null, design: null } }))} />);
-    const cta = screen.getByRole("link", { name: "Review Evidence & Validate" });
+    const cta = screen.getByRole("link", { name: "Continue in Agent Insights" });
     expect(cta).toHaveAttribute("href", "/agent-insights?signal=sig_second");
     expect(cta).toHaveClass("primary");
     expect(screen.getByText("Request diagnostic hypothesis")).toHaveAttribute("href", "/agent-insights?signal=sig_second");
@@ -180,7 +180,7 @@ describe("Command Center data states", () => {
     render(<CommandCenter />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading team summary");
     expect(await screen.findByRole("region", { name: "Resolution clarity" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Review Evidence & Validate" })).toHaveAttribute("href", "/agent-insights?signal=sig_top");
+    expect(screen.getByRole("link", { name: "Continue in Agent Insights" })).toHaveAttribute("href", "/agent-insights?signal=sig_top");
     expect(screen.getByText("Real ResultsCX · local")).toBeInTheDocument();
   });
 

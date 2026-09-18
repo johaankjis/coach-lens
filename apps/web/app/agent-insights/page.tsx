@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 /**
  * Agent Insights is the existing three-column review workspace. Home links here with
- * `?signal=<id>` so a priority insight opens on the signal it summarized.
+ * `?signal=<id>` so a selected insight opens on the signal it summarized.
  */
 export default async function AgentInsightsPage({
   searchParams,

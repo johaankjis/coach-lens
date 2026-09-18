@@ -1501,7 +1501,7 @@ a.brand {
   margin-top: 0;
 }
 
-/* Performance gaps: one series, one hue; fill on a lighter step of the same ramp. */
+/* Observed criteria: one series, one hue; fill on a lighter step of the same ramp. */
 .gap-list {
   list-style: none;
   margin: 0;
@@ -1557,7 +1557,6 @@ a.brand {
   height: 100%;
   background: var(--teal);
   border-radius: 4px;
-  min-width: 2px;
 }
 .gap-meta {
   display: flex;
@@ -1570,7 +1569,7 @@ a.brand {
   color: var(--ink);
 }
 
-/* Priority insight */
+/* Selected insight */
 .priority .domain-tag {
   margin-top: 6px;
 }

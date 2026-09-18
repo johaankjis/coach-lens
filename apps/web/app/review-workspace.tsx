@@ -384,7 +384,7 @@ function RevisionForm({
 
 /**
  * The deep diagnostic workspace (Agent Insights). `initialSignalId` lets Home open it on the
- * signal a priority insight summarized; an unknown id falls back to the backend's first signal.
+ * signal Home summarized; an unknown id falls back to an observed signal with a notice.
  */
 export default function ReviewWorkspace({
   initialSignalId = null,
@@ -443,11 +443,11 @@ export default function ReviewWorkspace({
       setSignals(result);
       setLoadingSignal(true);
       setSelectedId((current) =>
-        result.some((signal) => signal.signal_id === current)
-          ? current
-          : result.some((signal) => signal.signal_id === initialSignalId)
+        result.some((signal) => signal.signal_id === initialSignalId)
             ? initialSignalId
-            : (result[0]?.signal_id ?? null),
+            : result.some((signal) => signal.signal_id === current)
+              ? current
+              : (result[0]?.signal_id ?? null),
       );
     } catch (cause) {
       setError((cause as Error).message);
@@ -663,6 +663,12 @@ export default function ReviewWorkspace({
             </button>
           </div>
         )}
+        {!loadingSignals && initialSignalId && signals.length > 0 &&
+          !signals.some((signal) => signal.signal_id === initialSignalId) && (
+            <p role="status" className="banner">
+              Requested signal is unavailable. Showing an observed criterion instead.
+            </p>
+          )}
         <div className="workspace-grid">
           <aside className="signal-nav" aria-label="Observed QA signals">
             <div className="rail-heading">
@@ -1009,8 +1015,8 @@ export default function ReviewWorkspace({
                                 <strong>{label(currentValidation.validation_outcome)}</strong>
                                 <span>{currentValidation.semantic_status === "evidence_validated" ? "EVIDENCE VALIDATED" : "EVIDENCE QUESTIONED"}</span>
                                 <small>
-                                  {isDemo ? "Fixed fixture review of the original fixture proposal." : "AI review of the original AI proposal."}{" "}
-                                  Not a human decision.
+                                  Semantic review of the original provider proposal. Not a human
+                                  decision or a review of any later human revision.
                                 </small>
                               </div>
                               <p>{currentValidation.support_assessment}</p>

@@ -114,8 +114,8 @@ function PerformanceGaps({ model }: { model: HomeReadModel }) {
     <section className="home-card gaps" aria-labelledby="gaps-title">
       <div className="home-card-head">
         <div>
-          <span className="eyebrow">M2 counts · ranked by the backend</span>
-          <h2 id="gaps-title">Top performance gaps</h2>
+          <span className="eyebrow">M2 observations · ordered by the backend</span>
+          <h2 id="gaps-title">Observed QA criteria</h2>
         </div>
         {model.observedSignalCount > 0 && (
           <Link className="text-link" href={AGENT_INSIGHTS_PATH}>
@@ -166,8 +166,8 @@ function PerformanceGaps({ model }: { model: HomeReadModel }) {
         </ol>
       )}
       <p className="source-note">
-        Ordered by failure count, then failure rate. This is an ordering policy, not a problem
-        threshold, and it does not say why a behavior occurred.
+        Ordered by failure count, then failure rate. Criteria with zero failures may appear.
+        This order does not establish severity or cause.
       </p>
     </section>
   );
@@ -204,11 +204,11 @@ function PriorityInsightCard({ model }: { model: HomeReadModel }) {
   if (!insight) {
     return (
       <section className="home-card priority" aria-labelledby="priority-title">
-        <span className="eyebrow">Priority insight</span>
-        <h2 id="priority-title">Nothing to prioritize yet</h2>
+        <span className="eyebrow">Selected insight</span>
+        <h2 id="priority-title">No observed criteria yet</h2>
         <p>
-          A priority insight appears once the backend has observed QA signals. Nothing is
-          synthesized in its absence.
+          Load QA evaluations to see an observed criterion here. Agent Insights remains available
+          for detailed analysis.
         </p>
         <Link className="button secondary" href={AGENT_INSIGHTS_PATH}>
           Open Agent Insights
@@ -223,7 +223,7 @@ function PriorityInsightCard({ model }: { model: HomeReadModel }) {
     <section className="home-card priority" aria-labelledby="priority-title">
       <div className="home-card-head">
         <div>
-          <span className="eyebrow">Priority insight · highest observed failure count</span>
+          <span className="eyebrow">Selected insight · first in backend failure-count order</span>
           <h2 id="priority-title">{insight.criterion}</h2>
           <span className="domain-tag">{insight.domain}</span>
         </div>
@@ -243,9 +243,7 @@ function PriorityInsightCard({ model }: { model: HomeReadModel }) {
           </strong>
           <small>
             {failure.coverage.evaluated} of {failure.coverage.total} loaded evaluations contain
-            this criterion · {failure.affectedEvaluations} affected evaluation
-            {failure.affectedEvaluations === 1 ? "" : "s"} · {failure.feedbackCount} with
-            evaluator feedback
+            this criterion · {failure.feedbackCount} with evaluator feedback
           </small>
         </div>
 
@@ -307,7 +305,7 @@ function PriorityInsightCard({ model }: { model: HomeReadModel }) {
           <small>
             {evidenceReview.state === "evidence_validated" ||
             evidenceReview.state === "evidence_questioned"
-              ? `${evidenceReview.origin === "fixture" ? "Fixture" : "AI"} review of the original proposal. Not a human decision.`
+              ? "Semantic review of the original proposal. Not a human decision or a review of any later human revision."
               : evidenceReview.state === "not_run"
                 ? "Semantic evidence review has not been run for this proposal."
                 : "Runs once a diagnosis exists."}
@@ -394,7 +392,7 @@ function PriorityInsightCard({ model }: { model: HomeReadModel }) {
 
       <div className="insight-actions">
         <Link className="button primary" href={insight.reviewHref}>
-          Review Evidence &amp; Validate
+          Continue in Agent Insights
         </Link>
         <div className="next-step">
           <span className="field-label">Recommended next step</span>
@@ -449,7 +447,7 @@ export function CommandCenterView({
           <span className="eyebrow">Command center</span>
           <h1 id="home-title">What needs attention across the team?</h1>
           <p>
-            Observed QA gaps, the working diagnosis under review, and where to go next. Home
+            Observed QA criteria, the working diagnosis under review, and where to go next. Home
             summarizes; Agent Insights explains.
           </p>
         </div>

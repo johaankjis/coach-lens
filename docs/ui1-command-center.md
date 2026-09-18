@@ -6,7 +6,7 @@ UI-1 adds a product shell and a Home page in front of the existing M4/M5 review 
 
 | Route | Section | Role | State in UI-1 | Data source |
 | --- | --- | --- | --- | --- |
-| `/` | Home | Command center: summarize, prioritize, route | Implemented | M2 counts via M3 signals, M3 records, AWS-3 review, M5 design result, `/diagnostics/mode` |
+| `/` | Home | Command center: summarize observations and route | Implemented | M2 counts via M3 signals, M3 records, AWS-3 review, M5 design result, `/diagnostics/mode` |
 | `/agent-insights` | Agent Insights | Deep diagnostic workspace (the existing review UI) | Implemented | M3 / M4 / AWS-3 / M5 as before |
 | `/training` | Training | Downstream intervention and training design | Planned page | AWS-4, AWS-5 |
 | `/role-play` | Role-Play | Practice simulation | Planned page | AWS-5 practice scenarios |
@@ -20,8 +20,8 @@ Planned pages (`apps/web/app/components/section-placeholder.tsx`) name the secti
 
 ```
 Home (summary)
-  -> Priority insight (one signal, its latest record, its semantic review, its human status)
-    -> Review Evidence & Validate  (link to /agent-insights?signal=<id>)
+  -> Selected insight (first signal in backend failure-count order, with its latest record and review states)
+    -> Agent Insights (link to /agent-insights?signal=<id>)
       -> Existing workspace: observed signal, hypothesis, semantic review, human decision, M5 design
 ```
 
@@ -30,14 +30,14 @@ Home summarizes; Agent Insights explains. Every number on Home is a link or one 
 ## Home sections
 
 1. **Heading and provenance.** The provenance badge is built from `GET /diagnostics/mode`: synthetic demo, real ResultsCX (local), local normalized, no data loaded, or unknown when the route fails. Provider fields are echoed, so a label can never claim a provider that is not installed.
-2. **Top summary** (four stat tiles): Agents monitored, Priority issues, Overall QA, Training / intervention. Only Priority issues has a value today (the count of observed signals whose backend `fail_count` is above zero, with the total observed criteria beside it and an explicit "no severity threshold" note). The other three are **pending** tiles that name the milestone that owns them and show the M2 count that is available (evaluations loaded, criteria observed).
-3. **Top performance gaps**: up to five signals in the backend's order (descending failure count, then failure rate). Each row shows the backend's fail count, evaluated results, coverage, and a single-hue bar whose width is the backend `fail_rate`. The UI never re-sorts or recomputes.
-4. **Priority insight**: the first ranked signal with its latest M3 record. Fields: performance issue, working diagnosis, working cause type, confidence (non-calibrated wording; fixture wording when the provider is the M4 demo fixture), evidence review (AWS-3), human validation (M4), explanation, semantic assessment, evidence preview (cited references and missing-evidence items from the current diagnosis), the primary CTA, and a recommended next step derived from the record state.
+2. **Top summary** (four stat tiles): Agents monitored, Priority issues, Overall QA, Training / intervention. All are **pending** until their owning backend contracts provide them. Available M2 evaluation and criterion counts appear only as contextual notes.
+3. **Observed QA criteria**: up to five signals in the backend's order (descending failure count, then failure rate). Zero-failure criteria can appear. Each row shows the backend's fail count, evaluated results, coverage, and a single-hue bar whose width is the backend `fail_rate`. The UI never re-sorts or recomputes.
+4. **Selected insight**: the first ordered signal with its latest M3 record. Ordering is by observed failure count, not a priority or severity policy. Fields: performance issue, working diagnosis, working cause type, confidence (non-calibrated wording; fixture wording when the provider is the M4 demo fixture), evidence review (AWS-3), human validation (M4), explanation, semantic assessment, evidence preview (cited references and missing-evidence items from the current diagnosis), the primary CTA, and a recommended next step derived from the record state. An all-pass criterion with no diagnosis leads to evidence inspection, not a request for diagnosis.
 5. **Downstream stages**: Intervention (AWS-4), Training (AWS-5), Alignment (AWS-6), Outcome. These render as blocked, not started, proposed, not applicable, or pending backend. "Proposed" appears only when an M5 design result exists for the validated diagnosis, and it always says the proposal is not yet validated.
 
 ## Semantics
 
-- Before human validation the page says **working diagnosis**, **working cause type**, **evidence review**, **human validation**, and **recommended next step: review diagnosis**. It never says a root cause implies training.
+- Before human validation the page says **working diagnosis**, **working cause type**, **evidence review**, **human validation**, and **recommended next step: review diagnosis**. It never says a root cause implies training. The semantic review label describes only the original provider proposal; it does not infer whether the separate validator was a fixture or AI from the diagnosis provider.
 - Semantic **evidence questioned** uses the caution tone (amber). The rejected tone (red) is reserved for a human rejection. Approved and evidence validated share the validated tone (teal). Proposed uses a separate slate tone; pending backend uses a dashed neutral tone.
 - Confidence keeps the workspace's language: a provider self-report or a fixed fixture value, not a statistically calibrated probability.
 - The pipeline strip shows every stage of the intended workflow (observed, working diagnosis, evidence review, human validation, intervention, training, alignment, outcome) with its current, truthful status.
@@ -54,7 +54,7 @@ apps/web/app/command-center.tsx   CommandCenterView(model) pure view; CommandCen
 
 Rules enforced by the boundary:
 
-- No QA statistics are calculated in React. The builder formats and maps backend values; the only arithmetic is a display percentage from the backend's `fail_rate` string and a list length for "signals with failures".
+- No QA statistics are calculated in React. The builder formats and maps backend values; the only arithmetic is a display percentage from the backend's `fail_rate` string.
 - Unavailable data is an explicit state, not a zero and not a placeholder number.
 - Fixture provenance is carried at two levels: the runtime mode badge, and per-record detection of the `m4-demo-fixture` provider, which switches the wording to "fixture" throughout. There is no frontend fixture mode; fixtures only ever come from the backend demo scripts, matching the existing repository pattern.
 
@@ -68,6 +68,7 @@ Rules enforced by the boundary:
 | Training stage | blocked / proposed (M5 outline) | AWS-5 training status: same |
 | Alignment stage | pending backend | AWS-6 alignment status |
 | Outcome stage | pending backend | Outcome evaluation |
+| Priority issues tile | pending | A backend priority policy and count, if one is introduced |
 | Training / intervention tile | pending | derive from the AWS-4 / AWS-5 fields above |
 
 Each wiring change is a loader fetch in `load.ts` plus a mapping in `read-model.ts`; the view already renders every `DownstreamStage.status` and `MetricReading.state`. The AWS-4 and AWS-5 lanes' API contracts are not assumed anywhere in the frontend.

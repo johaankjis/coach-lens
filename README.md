@@ -70,7 +70,7 @@ See [product spec](docs/product-spec.md) and [architecture](docs/architecture.md
 
 ## UI-1 Home / Command Center
 
-The frontend opens on a Home command center (`/`) that summarizes observed QA gaps, the priority insight under review, its AWS-3 evidence review and human-validation status, and typed pending slots for later intervention, training, alignment, and outcome milestones. Its **Review Evidence & Validate** action routes into the unchanged review workspace at `/agent-insights?signal=<id>` (Agent Insights). Training, Role-Play, KPI Tracker, Reports, and Resources are planned pages with no controls or figures. Home computes no QA statistics; see [the UI-1 guide](docs/ui1-command-center.md) for the read-model and wiring points.
+The frontend opens on a Home command center (`/`) that summarizes observed QA criteria, the first signal in the backend's failure-count order, its AWS-3 evidence review and human-validation status, and typed pending slots for later intervention, training, alignment, and outcome milestones. This ordering does not establish priority or severity; the Priority issues metric remains pending. **Continue in Agent Insights** routes into the detailed review workspace at `/agent-insights?signal=<id>`. Training, Role-Play, KPI Tracker, Reports, and Resources are planned pages with no controls or figures. Home computes no QA statistics; see [the UI-1 guide](docs/ui1-command-center.md) for the read-model and wiring points.
 
 ## M5 design flow and M4 review workspace
 

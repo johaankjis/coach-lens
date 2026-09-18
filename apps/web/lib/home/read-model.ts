@@ -118,7 +118,6 @@ export type EvidenceReviewStatus =
       state: "evidence_validated" | "evidence_questioned";
       outcome: string;
       assessment: string;
-      origin: DiagnosisOrigin;
       unsupportedClaims: number;
       missingEvidence: number;
     };
@@ -170,7 +169,6 @@ export type PriorityInsight = {
     failRateLabel: string;
     coverage: { evaluated: number; total: number };
     feedbackCount: number;
-    affectedEvaluations: number;
   };
   diagnosis: WorkingDiagnosis;
   evidenceReview: EvidenceReviewStatus;
@@ -316,19 +314,24 @@ function evidenceReview(
     state: validation.semantic_status,
     outcome: label(validation.validation_outcome),
     assessment: validation.support_assessment,
-    origin: originOf(record),
     unsupportedClaims: validation.unsupported_claims.length,
     missingEvidence: validation.missing_evidence.length,
   };
 }
 
 function nextStep(
-  signalId: string,
+  signal: Signal,
   record: RecordState | null,
   validation: EvidenceValidation | null,
   design: DesignResult | null,
 ): NextStep {
-  const href = agentInsightsHref(signalId);
+  const href = agentInsightsHref(signal.signal_id);
+  if (!record && signal.fail_count === 0)
+    return {
+      label: "Inspect observed criterion",
+      detail: "No failed results were observed for this criterion. Inspect its QA evidence in Agent Insights.",
+      href,
+    };
   if (!record)
     return {
       label: "Request diagnostic hypothesis",
@@ -396,13 +399,12 @@ export function buildPriorityInsight(
       failRateLabel: percentLabel(signal.fail_rate),
       coverage: { evaluated: signal.evaluated_evaluations, total: signal.total_evaluations },
       feedbackCount: signal.feedback_count,
-      affectedEvaluations: signal.affected_evaluation_ids.length,
     },
     diagnosis: workingDiagnosis(record),
     evidenceReview: evidenceReview(record, validation),
     humanValidation: humanValidation(record),
     evidence: evidencePreview(record),
-    nextStep: nextStep(signal.signal_id, record, validation, design),
+    nextStep: nextStep(signal, record, validation, design),
     reviewHref: agentInsightsHref(signal.signal_id),
   };
 }
@@ -464,10 +466,8 @@ export function buildDownstream(
 
 export function buildSummary(
   provenance: Provenance,
-  signals: Signal[],
   downstream: DownstreamStage[],
 ): SummaryMetric[] {
-  const withFailures = signals.filter((signal) => signal.fail_count > 0).length;
   const loaded = provenance.evaluationCount;
   const intervention = downstream.find((stage) => stage.id === "intervention");
   return [
@@ -487,14 +487,15 @@ export function buildSummary(
     {
       id: "priority",
       label: "Priority issues",
-      source: "M2 / M3 observed signals",
-      reading: signals.length
-        ? {
-            state: "available",
-            value: String(withFailures),
-            detail: `of ${signals.length} observed criteria have failed results. No severity threshold is applied.`,
-          }
-        : { state: "unavailable", reason: "No observed signals to count." },
+      source: "Priority policy pending",
+      reading: {
+        state: "pending",
+        reason: "The backend has not classified or prioritized issues.",
+        note:
+          provenance.signalCount === null
+            ? undefined
+            : `${provenance.signalCount} observed criteria loaded`,
+      },
     },
     {
       id: "qa",
@@ -516,7 +517,7 @@ export function buildSummary(
       reading: {
         state: "pending",
         reason: "Intervention validation and training status are not merged yet.",
-        note: intervention ? `Priority insight: ${label(intervention.status)}` : undefined,
+        note: intervention ? `Selected insight: ${label(intervention.status)}` : undefined,
       },
     },
   ];
@@ -527,7 +528,7 @@ export function buildHomeReadModel(sources: HomeSources): HomeReadModel {
   const downstream = buildDownstream(sources.priority);
   return {
     provenance,
-    summary: buildSummary(provenance, sources.signals, downstream),
+    summary: buildSummary(provenance, downstream),
     observedSignalCount: sources.signals.length,
     gaps: sources.signals.slice(0, TOP_GAP_COUNT).map((signal, index) => ({
       rank: index + 1,
