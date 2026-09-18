@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from pydantic import Field, ValidationError
 
-from app.results_cx.models import Evaluation
+from app.results_cx.models import Domain, Evaluation
 
 from .engine import ProviderOutputError
 from .models import (CauseDomain, PerformanceDimension, ProviderEvidenceBundle,
@@ -32,7 +32,8 @@ missing evidence. Return undetermined when the evidence cannot distinguish cause
 automatically recommend training. A human validates the diagnosis afterward.
 Cite at least one supplied reference, including SIGNAL-001 when only aggregate evidence
 supports the observation. diagnostic_text, when present, is locally minimized evaluator
-feedback. Its absence does not mean no local feedback existed. Use text_coverage to judge
+feedback in which [redacted] marks a suppressed staff name; treat it as an unnamed person.
+Its absence does not mean no local feedback existed. Use text_coverage to judge
 qualitative coverage; blocked or missing text does not support a cause. Do not invent hidden
 feedback. High failure rate alone does not establish a training need."""
 
@@ -122,6 +123,8 @@ REAL_ITEM_PAYLOAD_KEYS = ITEM_PAYLOAD_KEYS | {"diagnostic_text"}
 TEXT_COVERAGE_KEYS = frozenset({"total_evidence_items", "evidence_items_with_feedback",
                                 "minimized_text_items_allowed", "text_items_blocked",
                                 "text_items_with_no_text"})
+_DOMAINS = frozenset(domain.value for domain in Domain)
+MAX_TEXT_LENGTH = 1000  # Mirrors evidence_policy; the validator must not import policy state.
 
 
 class BedrockResponse(StrictModel):
@@ -198,6 +201,7 @@ def validate_real_wire_payload(payload: dict) -> None:
                       "feedback_coverage", "max_score_total", "attained_score_total", "score_rate"}
     if (signal["reference"] != "SIGNAL-001" or
             any(not isinstance(signal[key], str) for key in signal_strings) or
+            signal["domain"] not in _DOMAINS or len(signal["criterion"]) > MAX_TEXT_LENGTH or
             any(type(signal[key]) is not int or signal[key] < 0 for key in SIGNAL_PAYLOAD_KEYS - signal_strings) or
             any(type(coverage[key]) is not int or coverage[key] < 0 for key in TEXT_COVERAGE_KEYS) or
             coverage["total_evidence_items"] != len(items) or
@@ -210,14 +214,15 @@ def validate_real_wire_payload(payload: dict) -> None:
                 item["reference"] != f"EVID-{number:03d}" or
                 any(not isinstance(item[key], str) for key in ("domain", "criterion", "max_score",
                                                                "attained_score")) or
-                type(item["failed"]) is not bool):
+                item["domain"] not in _DOMAINS or item["domain"] != signal["domain"] or
+                item["criterion"] != signal["criterion"] or type(item["failed"]) is not bool):
             raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
         if "diagnostic_text" in item and (not isinstance(item["diagnostic_text"], dict) or
                                           set(item["diagnostic_text"]) != {"kind", "text"} or
                                           item["diagnostic_text"]["kind"] != "minimized_evaluator_feedback" or
                                           not isinstance(item["diagnostic_text"]["text"], str) or
                                           not item["diagnostic_text"]["text"] or
-                                          len(item["diagnostic_text"]["text"]) > 1000):
+                                          len(item["diagnostic_text"]["text"]) > MAX_TEXT_LENGTH):
             raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
 
 
@@ -269,6 +274,7 @@ class BedrockReasoner:
         self._client = client
         self._synthetic_evaluation_ids: frozenset[str] | None = None
         self._trusted_evaluations: list[Evaluation] | None = None
+        self._trusted_digest: str | None = None
 
     @classmethod
     def for_synthetic_evaluations(cls, region: str, model_id: str,
@@ -289,10 +295,14 @@ class BedrockReasoner:
                                *, client=None) -> "BedrockReasoner":
         from app.results_cx.demo import TrustedResultsCXEvaluations
 
-        if not isinstance(evaluations, TrustedResultsCXEvaluations) or not evaluations:
+        if type(evaluations) is not TrustedResultsCXEvaluations or not evaluations:
             raise ValueError("Real remote diagnosis requires trusted local workbook provenance")
+        evaluations.verify()
         reasoner = cls(region, model_id, client=client)
-        reasoner._trusted_evaluations = list(evaluations)
+        # A private deep copy plus the loader's digest: later mutation of the caller's objects
+        # cannot change what is sent, and in-place mutation of this copy is refused at use.
+        reasoner._trusted_evaluations = [evaluation.model_copy(deep=True) for evaluation in evaluations]
+        reasoner._trusted_digest = evaluations.content_digest
         return reasoner
 
     @property
@@ -327,9 +337,11 @@ class BedrockReasoner:
     async def diagnose(self, evidence_bundle: ProviderEvidenceBundle) -> object:
         if self._trusted_evaluations is not None:
             from .engine import build_bundle, detect_signals
-            from .evidence_policy import prepare_real_evidence
+            from .evidence_policy import population_digest, prepare_real_evidence
 
             evaluations = self._trusted_evaluations
+            if population_digest(evaluations) != self._trusted_digest:
+                raise ProviderOutputError("provider_privacy_blocked", "Remote diagnosis privacy policy blocked")
             signal = next((s for s in detect_signals(evaluations)
                            if s.signal_id == evidence_bundle.signal.signal_id), None)
             if signal is None:

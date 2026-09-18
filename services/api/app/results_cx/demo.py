@@ -6,6 +6,7 @@ from app.design.service import DesignService, UnavailableDesignProvider
 from app.config import get_settings
 from app.diagnostics.bedrock import BedrockReasoner
 from app.diagnostics.engine import DiagnosticService, UnavailableReasoner
+from app.diagnostics.evidence_policy import population_digest
 
 from .models import Domain, Evaluation
 from .pipeline import PipelineValidationError, discover_sources, normalize
@@ -21,12 +22,36 @@ REAL_MODE = "real_results_cx"
 
 
 class TrustedResultsCXEvaluations(list):
-    """In-process provenance minted only after strict local workbook validation."""
+    """In-process provenance minted only after strict local workbook validation.
+
+    The container is immutable, refuses copy and pickle reconstruction, holds its own deep
+    copies, and records a content digest at mint time. `verify()` fails if any record was
+    changed in place afterward, so a trusted object cannot be refilled with other data.
+    """
 
     def __init__(self, evaluations: list[Evaluation], *, _loader_token: object):
         if _loader_token is not _TRUSTED_LOADER_TOKEN:
             raise ValueError("Trusted ResultsCX evidence requires the local workbook loader")
-        super().__init__(evaluations)
+        super().__init__(evaluation.model_copy(deep=True) for evaluation in evaluations)
+        self._content_digest = population_digest(self)
+
+    @property
+    def content_digest(self) -> str:
+        return self._content_digest
+
+    def verify(self) -> None:
+        if (type(self) is not TrustedResultsCXEvaluations or
+                population_digest(self) != getattr(self, "_content_digest", None)):
+            raise ValueError("Trusted ResultsCX evidence changed after loading")
+
+    def _immutable(self, *args, **kwargs):
+        raise TypeError("Trusted ResultsCX evidence is immutable")
+
+    append = extend = insert = pop = remove = clear = sort = reverse = _immutable
+    __setitem__ = __delitem__ = __iadd__ = __imul__ = _immutable
+
+    def __reduce_ex__(self, protocol):
+        raise TypeError("Trusted ResultsCX evidence cannot be copied or pickled")
 
 
 _TRUSTED_LOADER_TOKEN = object()
@@ -68,7 +93,7 @@ def install_results_cx_demo(app, evaluations: list[Evaluation]) -> None:
     A plain list keeps the Bedrock privacy block.
     """
     settings = get_settings()
-    if settings.bedrock_enabled and isinstance(evaluations, TrustedResultsCXEvaluations):
+    if settings.bedrock_enabled and type(evaluations) is TrustedResultsCXEvaluations:
         reasoner = BedrockReasoner.for_trusted_results_cx(
             settings.bedrock_region, settings.bedrock_model_id, evaluations)
     else:
