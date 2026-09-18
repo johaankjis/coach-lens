@@ -11,6 +11,7 @@ from uuid import uuid4
 from app.config import get_settings
 from app.diagnostics.engine import DiagnosticService, detect_signals
 from app.diagnostics.evidence_validator import EvidenceValidationService
+from app.design.bedrock import BedrockTrainingDesigner
 from app.design.demo import DemoDesignFixture
 from app.design.service import DesignService
 
@@ -118,5 +119,14 @@ if __name__ == "__main__":
                                                                DemoFixtureEvidenceValidator())
     app.state.demo_mode = "synthetic_demo"
     fixture = DemoDesignFixture(resolution_signal_id)
-    app.state.designs = DesignService(app.state.diagnostics, fixture, fixture, controlled_fixture=True)
+    settings = get_settings()
+    if settings.bedrock_enabled:
+        # AWS-5: synthetic rows, fixed fixture diagnosis and intervention, real Bedrock training
+        # design. The result's generation_mode is "provider" because one provider is real.
+        designer = BedrockTrainingDesigner(settings.bedrock_region, settings.bedrock_model_id,
+                                           diagnostics=app.state.diagnostics)
+        app.state.designs = DesignService(app.state.diagnostics, fixture, designer)
+        print("M4 synthetic demo with the AWS-5 Bedrock training designer enabled")
+    else:
+        app.state.designs = DesignService(app.state.diagnostics, fixture, fixture, controlled_fixture=True)
     uvicorn.run(app, host="127.0.0.1", port=8000)

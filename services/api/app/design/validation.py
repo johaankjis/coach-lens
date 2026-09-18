@@ -1,10 +1,28 @@
 """Reject fabricated or cross-run references in untrusted design output."""
 
+import re
+
 from pydantic import ValidationError
 
 from app.diagnostics.engine import untrusted_payload
 
 from .models import DesignInput, DecisionType, InterventionDecision, TrainingDesign
+
+
+# A designer marks an operational fact it was not given with this token instead of inventing
+# one. Every token must be declared in `missing_operational_details`.
+PLACEHOLDER_PATTERN = re.compile(r"\[PLACEHOLDER:[^\]]*\]")
+
+
+def _texts(value) -> list[str]:
+    """Every string anywhere in a validated design, for whole-design text checks."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in _texts(item)]
+    if isinstance(value, (list, tuple)):
+        return [text for item in value for text in _texts(item)]
+    return []
 
 
 class InvalidDesignOutput(ValueError):
@@ -62,7 +80,8 @@ def validate_training(raw: object, context: DesignInput) -> TrainingDesign:
     sections = _unique(design.outline, "section_id", run)
     scenarios = _unique(design.practice_scenarios, "scenario_id", run)
     checks = _unique(design.decision_checks, "check_id", run)
-    all_ids = [*behaviors, *objectives, *activities, *sections, *scenarios, *checks]
+    details = _unique(design.missing_operational_details, "detail_id", run)
+    all_ids = [*behaviors, *objectives, *activities, *sections, *scenarios, *checks, *details]
     for check in design.decision_checks:
         all_ids.extend(option.option_id for option in check.options)
     for scenario in design.practice_scenarios:
@@ -90,6 +109,15 @@ def validate_training(raw: object, context: DesignInput) -> TrainingDesign:
         _refs(check.objective_ids, objectives, "check objective")
         if len({option.option_id for option in check.options}) != 4 or sum(o.correct for o in check.options) != 1:
             raise InvalidDesignOutput("Decision check requires four distinct options and one correct response")
+        # ResultsCX: feedback is specific to each option. Identical feedback on two options,
+        # or feedback that merely restates the response, is not specific.
+        feedback = [option.feedback.strip().casefold() for option in check.options]
+        if len(set(feedback)) != 4 or any(option.feedback.strip().casefold() == option.response.strip().casefold()
+                                          for option in check.options):
+            raise InvalidDesignOutput("Decision check feedback must be specific to each option")
+        _refs(check.behavior_ids, {behavior_id for objective_id in check.objective_ids
+                                   for behavior_id in objective_by_id[objective_id].behavior_ids},
+              "check behavior")
     for scenario in design.practice_scenarios:
         if not scenario.persona.persona_id.startswith(run + "/"):
             raise InvalidDesignOutput("Cross-run persona reference")
@@ -105,6 +133,8 @@ def validate_training(raw: object, context: DesignInput) -> TrainingDesign:
             raise InvalidDesignOutput("Practice behavior is not supported by its objectives")
         _unique(scenario.beats, "beat_id", run)
         _unique(scenario.rubric, "criterion_id", run)
+        for beat in scenario.beats:
+            _refs(beat.behavior_ids, set(scenario.behavior_ids), "beat behavior")
         for criterion in scenario.rubric:
             if criterion.behavior_id not in scenario.behavior_ids or criterion.objective_id not in scenario.objective_ids:
                 raise InvalidDesignOutput("Rubric references outside practice")
@@ -126,4 +156,24 @@ def validate_training(raw: object, context: DesignInput) -> TrainingDesign:
     practiced = {behavior_id for scenario in design.practice_scenarios for behavior_id in scenario.behavior_ids}
     if not practiced >= behaviors:
         raise InvalidDesignOutput("Every target behavior needs hands-on practice")
+    # AWS-5: the design basis is a local restatement of the approved diagnosis, so it must
+    # agree with the gate exactly. A provider cannot re-describe the gap it was given.
+    basis = design.design_basis
+    if basis is not None:
+        approved = context.approved
+        if (basis.gap.diagnosis_id != approved.hypothesis_id or basis.gap.signal_id != approved.signal_id or
+                basis.gap.observed_behavior != approved.diagnosis.observed_behavioral_defect or
+                basis.gap.cause_domain != approved.diagnosis.cause_domain or
+                basis.gap.performance_dimension != approved.diagnosis.performance_dimension or
+                basis.gap.human_revised != approved.human_revised or basis.intervention.run_id != run):
+            raise InvalidDesignOutput("Design basis disagrees with the approved diagnosis")
+    # Every placeholder token in the design must be a declared missing operational detail, so
+    # nothing is silently left as a gap and nothing undeclared can pose as supplied fact.
+    declared = {detail.placeholder for detail in design.missing_operational_details}
+    if any(not PLACEHOLDER_PATTERN.fullmatch(placeholder) for placeholder in declared) or len(declared) != len(details):
+        raise InvalidDesignOutput("Missing operational details need distinct placeholder tokens")
+    used = {token for text in _texts(design.model_dump(mode="python", exclude={"missing_operational_details"}))
+            for token in PLACEHOLDER_PATTERN.findall(text)}
+    if not used <= declared:
+        raise InvalidDesignOutput("Undeclared placeholder in training design")
     return design

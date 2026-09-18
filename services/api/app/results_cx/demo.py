@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from app.design.bedrock import BedrockTrainingDesigner
 from app.design.service import DesignService, UnavailableDesignProvider
 from app.config import get_settings
 from app.diagnostics.bedrock import BedrockReasoner
@@ -110,5 +111,9 @@ def install_results_cx_demo(app, evaluations: list[Evaluation]) -> None:
         BedrockEvidenceValidator(settings.bedrock_region, settings.bedrock_model_id)
         if settings.bedrock_enabled else UnavailableEvidenceValidator())
     unavailable = UnavailableDesignProvider()
-    app.state.designs = DesignService(app.state.diagnostics, unavailable, unavailable)
+    app.state.designs = DesignService(
+        app.state.diagnostics, unavailable,
+        BedrockTrainingDesigner(settings.bedrock_region, settings.bedrock_model_id,
+                                diagnostics=app.state.diagnostics)
+        if settings.bedrock_enabled else unavailable)
     app.state.demo_mode = REAL_MODE

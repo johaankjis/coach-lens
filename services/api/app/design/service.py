@@ -7,6 +7,7 @@ from typing import Protocol
 
 from app.diagnostics.engine import DiagnosticError, DiagnosticService
 
+from .alignment import build_alignment_trace
 from .models import DesignInput, DesignResult, DecisionType
 from .validation import InvalidDesignOutput, validate_decision, validate_training
 
@@ -23,6 +24,33 @@ class DesignError(ValueError):
     def __init__(self, code: str, message: str):
         self.code = code
         super().__init__(message)
+
+
+# The only refusal reasons a training designer may raise, each with the only message text
+# that can reach a client. An unknown reason is reported as a generic provider failure.
+REFUSAL_MESSAGES = {
+    "not_training_intervention": "The validated intervention is not a training intervention",
+    "investigation_required": "The intervention requires investigation before training design",
+    "root_cause_unconfirmed": "Training design requires a confirmed knowledge or skill root cause",
+    "process_gap_not_training": "A process-gap root cause calls for an operational intervention, not training design",
+    "intervention_mismatch": "The intervention does not belong to this design run",
+}
+
+
+# Designer-raised policy stops that may pass to a client, each with its only allowed text.
+PASSTHROUGH_MESSAGES = {"design_privacy_blocked": "Training design privacy policy blocked"}
+
+
+class TrainingDesignRefused(DesignError):
+    """A training designer declined to design because the intervention is not designable.
+
+    The refusal is a fixed reason, never provider text. The service re-raises it with the
+    fixed message for that reason so the client learns why without any provider prose.
+    """
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__("training_design_refused", REFUSAL_MESSAGES.get(reason, "Training design refused"))
 
 
 class UnavailableDesignProvider:
@@ -109,11 +137,16 @@ class DesignService:
             except InvalidDesignOutput as exc:
                 raise DesignError("invalid_design_output", "Design provider returned invalid output") from exc
             except DesignError as exc:
-                # Only the service's own "not configured" signal passes through. Any other
-                # provider-raised DesignError is treated as a failure so its text never
-                # reaches a client response.
+                # Only the service's own "not configured" signal and a fixed-reason refusal
+                # pass through, each reconstructed with fixed text. Any other provider-raised
+                # DesignError is treated as a failure so its text never reaches a client response.
                 if exc.code == "design_provider_unavailable":
                     raise
+                if (exc.code == "training_design_refused" and
+                        getattr(exc, "reason", None) in REFUSAL_MESSAGES):
+                    raise DesignError("training_design_refused", REFUSAL_MESSAGES[exc.reason]) from exc
+                if exc.code in PASSTHROUGH_MESSAGES:
+                    raise DesignError(exc.code, PASSTHROUGH_MESSAGES[exc.code]) from exc
                 raise DesignError("design_provider_failure", "Design provider failed") from exc
             except Exception as exc:
                 raise DesignError("design_provider_failure", "Design provider failed") from exc
@@ -124,6 +157,8 @@ class DesignService:
                                   created_at=datetime.now(timezone.utc), status=status,
                                   generation_mode="controlled_fixture" if self.controlled_fixture else "provider",
                                   approved_diagnosis=context.approved,
-                                  intervention=decision, training_design=training)
+                                  intervention=decision, training_design=training,
+                                  alignment_trace=(build_alignment_trace(training, decision)
+                                                   if training is not None else None))
             self._results[hypothesis_id] = result
             return result.model_copy(deep=True)

@@ -19,7 +19,8 @@ def _error(exc: DesignError | DiagnosticError) -> HTTPException:
     if isinstance(exc, DiagnosticError):
         return diagnostic_http_error(exc)
     status = {"design_not_found": 404, "design_provider_unavailable": 503,
-              "invalid_design_output": 502, "design_provider_failure": 502}.get(exc.code, 500)
+              "invalid_design_output": 502, "design_provider_failure": 502,
+              "training_design_refused": 422, "design_privacy_blocked": 502}.get(exc.code, 500)
     return HTTPException(status_code=status, detail={"code": exc.code, "message": str(exc)})
 
 

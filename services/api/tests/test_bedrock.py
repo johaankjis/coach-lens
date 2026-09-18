@@ -418,8 +418,10 @@ def test_real_mode_with_bedrock_installed_blocks_before_aws(monkeypatch):
         demo.install_results_cx_demo(app, evaluations())
         assert isinstance(app.state.diagnostics.reasoner, BedrockReasoner)
         mode = TestClient(app).get("/diagnostics/mode").json()
+        # AWS-5 installs the Bedrock training designer with the flag; the intervention reasoner
+        # stays unavailable, so a design run still stops at 503 before any remote design call.
         assert mode == {"mode": "real_results_cx", "diagnostic_provider": "provider",
-                        "remote_diagnosis": "privacy_blocked", "design_provider": "unavailable",
+                        "remote_diagnosis": "privacy_blocked", "design_provider": "provider",
                         "evaluation_count": 2, "signal_count": 2}
         runtime = FakeRuntime()
         app.state.diagnostics.reasoner._client = runtime

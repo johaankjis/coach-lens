@@ -1,5 +1,7 @@
 # M5 intervention and training orchestration
 
+AWS-5 adds a provider-backed training designer, optional design-basis and scripted-practice fields, and a service-built alignment trace on top of these contracts; see [the AWS-5 guide](aws5-training-designer.md). Everything below still holds.
+
 M5 extends the existing evidence graph: source QA criterion rows → deterministic M2 signal → M3 hypothesis → human-approved diagnosis → proposed intervention → target behavior → objective → activity → practice scenario → rubric criterion. The backend, not the browser, owns every transition after approval. A single `POST /designs/diagnoses/{hypothesis_id}` executes the downstream flow without additional prompts. `GET` on the same path reads the immutable aggregate result. The Next.js app proxies `/api/designs/*` to the local FastAPI service.
 
 ## Decision before design

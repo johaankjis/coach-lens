@@ -217,6 +217,54 @@ export default function DesignWorkspace({
         <h3>Intervention rationale</h3>
         <p>{decision.rationale}</p>
       </section>
+      {d?.design_basis && (
+        <section className="design-section design-basis">
+          <span className="eyebrow">Design basis</span>
+          <h3>What this package was designed from</h3>
+          <dl>
+            <div>
+              <dt>Confirmed gap</dt>
+              <dd>{d.design_basis.gap.observed_behavior}</dd>
+            </div>
+            <div>
+              <dt>Validated intervention</dt>
+              <dd>
+                {label(d.design_basis.intervention.training_focus)} focus ·{" "}
+                {d.design_basis.intervention.validation_source === "aws4_solution_validator"
+                  ? "solution-validated"
+                  : "proposed by the intervention step, not yet solution-validated"}
+              </dd>
+            </div>
+            <div>
+              <dt>Design guidance</dt>
+              <dd>{d.design_basis.guidance_version}</dd>
+            </div>
+            <div>
+              <dt>Operational context supplied</dt>
+              <dd>
+                {d.design_basis.supplied_operational_context.length > 0
+                  ? d.design_basis.supplied_operational_context.join("; ")
+                  : "None. Any operational detail the design needed is listed as missing below, not invented."}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      )}
+      {d && (d.missing_operational_details?.length ?? 0) > 0 && (
+        <section className="design-section missing-details">
+          <span className="eyebrow">Operational details still needed</span>
+          <h3>Placeholders the designer did not fill in</h3>
+          <ul>
+            {d.missing_operational_details!.map((m) => (
+              <li key={m.detail_id}>
+                <strong>{m.placeholder}</strong>
+                <p>{m.description}</p>
+                <p className="quiet">Needed for: {m.needed_for}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {d && (
         <>
           <section className="design-section target-section">
@@ -233,7 +281,12 @@ export default function DesignWorkspace({
             <h3>What the learner should demonstrate</h3>
             <ul className="objective-list">
               {d.objectives.map((o) => (
-                <li key={o.objective_id}>{o.measurable_outcome}</li>
+                <li key={o.objective_id}>
+                  {o.measurable_outcome}
+                  {o.standard && (
+                    <p className="quiet objective-standard">Standard: {o.standard}</p>
+                  )}
+                </li>
               ))}
             </ul>
           </section>
@@ -358,6 +411,21 @@ export default function DesignWorkspace({
                   <span className="field-label">Learner objective</span>
                   <p>{s.learner_objective}</p>
                 </div>
+                {s.scenario_setup && (
+                  <div className="practice-objective">
+                    <span className="field-label">Scenario setup</span>
+                    <p>{s.scenario_setup}</p>
+                  </div>
+                )}
+                {s.escalation_expectation !== undefined && (
+                  <div className="practice-objective">
+                    <span className="field-label">Escalation handling</span>
+                    <p>
+                      {s.escalation_expectation ??
+                        "No escalation procedure was supplied, so none is scripted."}
+                    </p>
+                  </div>
+                )}
                 <details className="practice-details">
                   <summary>
                     View scenario guidance and conversation beats
@@ -395,8 +463,14 @@ export default function DesignWorkspace({
                       <li key={b.beat_id}>
                         <strong>{b.trigger}</strong>
                         <p>Likely response: “{b.likely_response}”</p>
+                        {b.expected_learner_behavior && (
+                          <p>Expected learner behavior: {b.expected_learner_behavior}</p>
+                        )}
                         <p>Success: {b.success_branch}</p>
                         <p>Challenge: {b.challenge_branch}</p>
+                        {b.facilitator_cue && (
+                          <p className="quiet">Facilitator cue: {b.facilitator_cue}</p>
+                        )}
                       </li>
                     ))}
                   </ol>

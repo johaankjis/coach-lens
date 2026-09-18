@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from app.diagnostics.api import router as diagnostics_router
 from app.diagnostics.engine import DiagnosticService, UnavailableReasoner  # noqa: F401 re-export
 from app.design.api import router as design_router
+from app.design.bedrock import BedrockTrainingDesigner
 from app.design.service import DesignService, UnavailableDesignProvider
 from app.results_cx.models import Evaluation
 
@@ -43,7 +44,13 @@ app.state.evidence_validations = EvidenceValidationService(
 )
 app.state.demo_mode = "local_normalized" if settings.diagnostic_evaluations_path else "unconfigured"
 unavailable_design = UnavailableDesignProvider()
-app.state.designs = DesignService(app.state.diagnostics, unavailable_design, unavailable_design)
+# AWS-5: the training designer follows the Bedrock flag; the intervention reasoner stays
+# unavailable here until AWS-4 installs one, so a run stops at the decision with 503.
+app.state.designs = DesignService(
+    app.state.diagnostics, unavailable_design,
+    BedrockTrainingDesigner(settings.bedrock_region, settings.bedrock_model_id,
+                            diagnostics=app.state.diagnostics)
+    if settings.bedrock_enabled else unavailable_design)
 app.include_router(diagnostics_router)
 app.include_router(design_router)
 
