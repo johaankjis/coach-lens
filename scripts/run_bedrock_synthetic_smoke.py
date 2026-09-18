@@ -34,9 +34,13 @@ async def main():
         raise SystemExit("Synthetic smoke refuses a configured local evaluations path")
     if not settings.bedrock_enabled:
         raise SystemExit("Set COACHLENS_BEDROCK_ENABLED=true for the synthetic smoke")
+    evaluations = synthetic_evaluations()
+    # The only way to unlock remote invocation: bind the reasoner to these in-memory synthetic
+    # records. The same object attached to any other records refuses to send anything.
     service = DiagnosticService(
-        synthetic_evaluations(),
-        BedrockReasoner(settings.bedrock_region, settings.bedrock_model_id, synthetic_evidence=True))
+        evaluations,
+        BedrockReasoner.for_synthetic_evaluations(settings.bedrock_region, settings.bedrock_model_id,
+                                                  evaluations))
     signal = service.list_signals()[0]
     record = await service.diagnose(signal.signal_id)
     hypothesis = record.provider_hypothesis

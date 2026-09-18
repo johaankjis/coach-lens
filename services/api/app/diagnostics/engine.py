@@ -173,6 +173,10 @@ def validate_provider_output(raw: object, bundle: EvidenceBundle) -> DiagnosticH
         hypothesis = DiagnosticHypothesis.model_validate(payload)
     except ValidationError as exc:
         raise ProviderOutputError("invalid_provider_output", "Reasoner returned an invalid hypothesis") from exc
+    if hypothesis.provider_metadata.generation_mode is not None:
+        # Provenance mode is assigned by the service from the installed object (see
+        # `stamp_generation_mode`); a provider or fixture may not assert its own.
+        raise ProviderOutputError("invalid_provider_output", "Reasoner may not assert its generation mode")
     if hypothesis.signal_id != bundle.signal.signal_id:
         raise ProviderOutputError("evidence_mismatch", "Reasoner associated a different signal")
     try:
@@ -213,6 +217,41 @@ def provider_kind(provider: object) -> str:
     if getattr(provider, "controlled_fixture", False) is True:
         return "controlled_fixture"
     return "provider"
+
+
+# What an installed provider object declares about sending evidence off-process. Values a
+# provider may declare about itself; anything else is reported as undeclared, so a provider
+# cannot invent a reassuring label through this route.
+REMOTE_POLICIES = frozenset({"privacy_blocked", "synthetic_only"})
+
+
+def remote_invocation_policy(provider: object) -> str:
+    """Read from the object, like `provider_kind`. "provider" alone never means "permitted"."""
+    if isinstance(provider, UnavailableReasoner):
+        return "unavailable"
+    if getattr(provider, "controlled_fixture", False) is True:
+        return "local_fixture"
+    policy = getattr(provider, "remote_invocation_policy", None)
+    return policy if policy in REMOTE_POLICIES else "undeclared"
+
+
+def stamp_generation_mode(hypothesis: DiagnosticHypothesis, provider: object) -> DiagnosticHypothesis:
+    """Record how the hypothesis was produced from the installed object, never from its output."""
+    mode = "controlled_fixture" if provider_kind(provider) == "controlled_fixture" else "provider"
+    metadata = hypothesis.provider_metadata.model_copy(update={"generation_mode": mode})
+    return hypothesis.model_copy(update={"provider_metadata": metadata})
+
+
+# Reasoner-raised errors that may pass to a client, with the only message text allowed for
+# each. Any other reasoner exception, including a ProviderOutputError with an unknown code,
+# is reported as a generic failure so provider-authored text never reaches a response.
+PROVIDER_ERROR_MESSAGES = {
+    "provider_privacy_blocked": "Remote diagnosis is disabled for non-synthetic evidence",
+    "invalid_provider_input": "Diagnostic evidence is inconsistent",
+    "invalid_provider_output": "Reasoner returned an invalid hypothesis",
+    "invalid_evidence_reference": "Evidence citation is outside this bundle",
+    "reasoner_failure": "Reasoning provider failed",
+}
 
 
 class DiagnosticService:
@@ -257,12 +296,14 @@ class DiagnosticService:
         try:
             raw = await self.reasoner.diagnose(self.provider_evidence(signal_id))
         except DiagnosticError as exc:
-            if isinstance(self.reasoner, UnavailableReasoner) or isinstance(exc, ProviderOutputError):
+            if isinstance(self.reasoner, UnavailableReasoner):
                 raise
-            raise ProviderOutputError("reasoner_failure", "Reasoning provider failed") from exc
+            code = exc.code if isinstance(exc, ProviderOutputError) and exc.code in PROVIDER_ERROR_MESSAGES \
+                else "reasoner_failure"
+            raise ProviderOutputError(code, PROVIDER_ERROR_MESSAGES[code]) from exc
         except Exception as exc:
             raise ProviderOutputError("reasoner_failure", "Reasoning provider failed") from exc
-        hypothesis = validate_provider_output(raw, bundle)
+        hypothesis = stamp_generation_mode(validate_provider_output(raw, bundle), self.reasoner)
         with self._lock:
             if hypothesis.hypothesis_id in self._records:
                 raise ProviderOutputError("invalid_provider_output", "Hypothesis ID already exists")

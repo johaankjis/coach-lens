@@ -11,6 +11,8 @@ from uuid import uuid4
 
 from pydantic import Field, ValidationError
 
+from app.results_cx.models import Evaluation
+
 from .engine import ProviderOutputError
 from .models import (CauseDomain, PerformanceDimension, ProviderEvidenceBundle,
                      StrictModel)
@@ -19,6 +21,11 @@ from .models import (CauseDomain, PerformanceDimension, ProviderEvidenceBundle,
 SYSTEM_PROMPT = """You propose why a recurring observed QA pattern might be happening.
 CoachLens supplies deterministic QA facts. Do not recalculate, override, or reinterpret
 source QA pass/fail results. Failure frequency alone does not establish root cause.
+Counts and rates describe only the criterion results that were evaluated;
+evaluations_containing_criterion is how many evaluations contain this criterion, and
+total_loaded_evaluations is the whole loaded dataset, which may be larger. Never treat
+failed results over total_loaded_evaluations as a rate, and never infer that evaluations
+without this criterion passed or failed it.
 Diagnosis is a proposal, not truth. Do not invent evidence or cite anything outside the
 supplied evidence references. Distinguish supporting from conflicting evidence, and identify
 missing evidence. Return undetermined when the evidence cannot distinguish causes. Do not
@@ -29,6 +36,19 @@ exactly: observed_behavioral_defect, cause_domain, performance_dimension, explan
 supporting_evidence_ids, conflicting_evidence_ids, missing_evidence,
 provider_reported_confidence. Cite at least one supplied reference, including SIGNAL-001
 when only aggregate evidence supports the observation. No markdown or other text."""
+
+PROVIDER_NAME = "Amazon Bedrock"
+
+# The only keys a Converse request may carry. Tests assert against these, so a new field
+# must be added here deliberately rather than appearing through serialization.
+SIGNAL_PAYLOAD_KEYS = frozenset({
+    "reference", "domain", "criterion", "failed_criterion_result_count",
+    "passed_criterion_result_count", "evaluated_criterion_result_count", "failure_rate",
+    "pass_rate", "evaluations_containing_criterion", "total_loaded_evaluations",
+    "feedback_count", "feedback_coverage", "max_score_total", "attained_score_total",
+    "score_rate"})
+ITEM_PAYLOAD_KEYS = frozenset({"reference", "domain", "criterion", "failed", "max_score",
+                               "attained_score"})
 
 
 class BedrockResponse(StrictModel):
@@ -80,6 +100,8 @@ def provider_safe_payload(bundle: ProviderEvidenceBundle) -> tuple[dict, dict[st
                           "attained_score_total": str(signal.attained_score_total),
                           "score_rate": str(signal.score_rate)},
                "evidence_items": items}
+    if set(payload["signal"]) != SIGNAL_PAYLOAD_KEYS or any(set(item) != ITEM_PAYLOAD_KEYS for item in items):
+        raise ProviderOutputError("invalid_provider_input", "Provider request projection drifted from allowlist")
     return payload, lookup
 
 
@@ -114,24 +136,56 @@ def parse_response(text: str, lookup: dict[str, tuple[str, str | None]]) -> dict
 
 
 class BedrockReasoner:
-    """Converse adapter. Default privacy policy refuses all remote requests.
+    """Converse adapter. The public constructor always refuses remote invocation.
 
-    `synthetic_evidence=True` is an explicit operator assertion for the synthetic smoke
-    entry point only. Never enable it for ResultsCX normalized records or workbooks.
+    Remote invocation exists only for evidence built from the exact in-memory synthetic
+    evaluations handed to `for_synthetic_evaluations`. The reasoner refuses any bundle whose
+    evaluation identifiers or loaded population differ from that set, so a synthetic-bound
+    reasoner attached to a service holding other records still sends nothing. No setting,
+    environment variable, or API input creates or unlocks the binding.
     """
 
     def __init__(self, region: str = "us-east-1",
-                 model_id: str = "global.anthropic.claude-sonnet-4-6",
-                 *, synthetic_evidence: bool = False, client=None):
+                 model_id: str = "global.anthropic.claude-sonnet-4-6", *, client=None):
         self.region = region
         self.model_id = model_id
-        self.synthetic_evidence = synthetic_evidence
         self._client = client
+        self._synthetic_evaluation_ids: frozenset[str] | None = None
+
+    @classmethod
+    def for_synthetic_evaluations(cls, region: str, model_id: str,
+                                  evaluations: list[Evaluation], *, client=None) -> "BedrockReasoner":
+        """Bind remote invocation to these synthetic records. Smoke entry point only.
+
+        Never call this with ResultsCX normalized records or workbook output.
+        """
+        ids = frozenset(evaluation.internal_id for evaluation in evaluations)
+        if not ids or len(ids) != len(evaluations):
+            raise ValueError("Synthetic evaluations must be non-empty with unique internal IDs")
+        reasoner = cls(region, model_id, client=client)
+        reasoner._synthetic_evaluation_ids = ids
+        return reasoner
+
+    @property
+    def remote_invocation_policy(self) -> str:
+        """Read by `/diagnostics/mode` from the object; see `engine.remote_invocation_policy`."""
+        return "privacy_blocked" if self._synthetic_evaluation_ids is None else "synthetic_only"
+
+    def _permits(self, bundle: ProviderEvidenceBundle) -> bool:
+        allowed = self._synthetic_evaluation_ids
+        if allowed is None:
+            return False
+        cited = {item.evaluation_id for item in bundle.items} | set(bundle.signal.affected_evaluation_ids)
+        return bool(cited) and cited <= allowed and bundle.signal.total_evaluations == len(allowed)
 
     def _converse(self, payload: dict):
         if self._client is None:
             import boto3
-            self._client = boto3.client("bedrock-runtime", region_name=self.region)
+            from botocore.config import Config
+            self._client = boto3.client(
+                "bedrock-runtime", region_name=self.region,
+                config=Config(connect_timeout=10, read_timeout=90,
+                              retries={"max_attempts": 2, "mode": "standard"}))
         return self._client.converse(
             modelId=self.model_id,
             system=[{"text": SYSTEM_PROMPT}],
@@ -140,12 +194,16 @@ class BedrockReasoner:
         )
 
     async def diagnose(self, evidence_bundle: ProviderEvidenceBundle) -> object:
-        if not self.synthetic_evidence:
+        if not self._permits(evidence_bundle):
             raise ProviderOutputError("provider_privacy_blocked",
                                       "Remote diagnosis is disabled for non-synthetic evidence")
         payload, lookup = provider_safe_payload(evidence_bundle)
         try:
             response = await asyncio.to_thread(self._converse, payload)
+            # A truncated, filtered, or guardrail-stopped turn is refused even when its text
+            # happens to parse; only a normally completed turn may become a hypothesis.
+            if response.get("stopReason", "end_turn") != "end_turn":
+                raise ProviderOutputError("invalid_provider_output", "Reasoner returned an invalid hypothesis")
             blocks = response["output"]["message"]["content"]
             if len(blocks) != 1 or set(blocks[0]) != {"text"}:
                 raise ValueError("Unexpected Converse content")
@@ -157,9 +215,9 @@ class BedrockReasoner:
             raise
         except Exception as exc:
             raise ProviderOutputError("reasoner_failure", "Reasoning provider failed") from exc
+        # `generation_mode` is deliberately absent: the service stamps it from the object.
         return {**parsed, "hypothesis_id": f"bedrock_{uuid4().hex}",
                 "signal_id": evidence_bundle.signal.signal_id,
-                "provider_metadata": {"provider": "Amazon Bedrock", "model": self.model_id,
+                "provider_metadata": {"provider": PROVIDER_NAME, "model": self.model_id,
                                       "invocation_region": self.region, "invocation_id": request_id,
-                                      "generated_at": datetime.now(timezone.utc),
-                                      "generation_mode": "provider"}}
+                                      "generated_at": datetime.now(timezone.utc)}}
