@@ -10,6 +10,9 @@ from app.results_cx.models import Evaluation
 
 from app.config import get_settings
 from app.diagnostics.bedrock import BedrockReasoner
+from app.diagnostics.evidence_validator import (BedrockEvidenceValidator,
+                                                 EvidenceValidationService,
+                                                 UnavailableEvidenceValidator)
 
 
 class HealthResponse(BaseModel):
@@ -32,6 +35,11 @@ app.state.diagnostics = DiagnosticService(
     _local_evaluations(),
     BedrockReasoner(settings.bedrock_region, settings.bedrock_model_id)
     if settings.bedrock_enabled else UnavailableReasoner(),
+)
+app.state.evidence_validations = EvidenceValidationService(
+    app.state.diagnostics,
+    BedrockEvidenceValidator()
+    if settings.bedrock_enabled else UnavailableEvidenceValidator(),
 )
 app.state.demo_mode = "local_normalized" if settings.diagnostic_evaluations_path else "unconfigured"
 unavailable_design = UnavailableDesignProvider()

@@ -338,7 +338,7 @@ class BedrockReasoner:
             inferenceConfig={"maxTokens": 1200, "temperature": 0},
         )
 
-    async def diagnose(self, evidence_bundle: ProviderEvidenceBundle) -> object:
+    def prepare_payload(self, evidence_bundle: ProviderEvidenceBundle) -> tuple[dict, dict]:
         if self._trusted_evaluations is not None:
             from .engine import build_bundle, detect_signals
             from .evidence_policy import population_digest, prepare_real_evidence
@@ -366,11 +366,15 @@ class BedrockReasoner:
                 raise ProviderOutputError("provider_privacy_blocked",
                                           "Remote diagnosis is disabled for non-synthetic evidence")
             payload, lookup = provider_safe_payload(evidence_bundle)
+        return payload, lookup
+
+    async def _diagnose_with_snapshot(self, evidence_bundle: ProviderEvidenceBundle) -> tuple[object, tuple[dict, dict]]:
+        payload, lookup = self.prepare_payload(evidence_bundle)
         try:
             response = await asyncio.to_thread(self._converse, payload)
             # A truncated, filtered, or guardrail-stopped turn is refused even when its text
             # happens to parse; only a normally completed turn may become a hypothesis.
-            if response.get("stopReason", "end_turn") != "end_turn":
+            if response.get("stopReason") != "end_turn":
                 raise ProviderOutputError("invalid_provider_output", "Reasoner returned an invalid hypothesis")
             blocks = response["output"]["message"]["content"]
             if len(blocks) != 1 or set(blocks[0]) != {"text"}:
@@ -384,8 +388,13 @@ class BedrockReasoner:
         except Exception as exc:
             raise ProviderOutputError("reasoner_failure", "Reasoning provider failed") from exc
         # `generation_mode` is deliberately absent: the service stamps it from the object.
-        return {**parsed, "hypothesis_id": f"bedrock_{uuid4().hex}",
-                "signal_id": evidence_bundle.signal.signal_id,
-                "provider_metadata": {"provider": PROVIDER_NAME, "model": self.model_id,
-                                      "invocation_region": self.region, "invocation_id": request_id,
-                                      "generated_at": datetime.now(timezone.utc)}}
+        result = {**parsed, "hypothesis_id": f"bedrock_{uuid4().hex}",
+                  "signal_id": evidence_bundle.signal.signal_id,
+                  "provider_metadata": {"provider": PROVIDER_NAME, "model": self.model_id,
+                                        "invocation_region": self.region, "invocation_id": request_id,
+                                        "generated_at": datetime.now(timezone.utc)}}
+        return result, (payload, lookup)
+
+    async def diagnose(self, evidence_bundle: ProviderEvidenceBundle) -> object:
+        result, _ = await self._diagnose_with_snapshot(evidence_bundle)
+        return result

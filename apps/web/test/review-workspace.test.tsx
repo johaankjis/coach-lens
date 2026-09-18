@@ -102,6 +102,28 @@ beforeEach(() => {
 });
 
 describe("diagnostic review semantics", () => {
+  it("shows a questioned evidence review separately from human approval", async () => {
+    const mock = route([proposed], async (path) => {
+      if (path.endsWith("/validate-evidence")) return reply({
+        validation_id: "val_1", hypothesis_id: "hyp_1", signal_id: "sig_1",
+        validation_outcome: "unsupported", semantic_status: "evidence_questioned",
+        support_assessment: "The cited failures do not establish a skill gap.",
+        supported_reference_ids: ["EVID-001"], contradicting_reference_ids: ["EVID-002"],
+        unsupported_claims: ["Skill gap is unproven"], missing_evidence: ["Direct observation"],
+        provider_reported_confidence: 0.2,
+      });
+      throw new Error(`Unexpected route ${path}`);
+    });
+    render(<ReviewWorkspace />);
+    await loaded();
+    await userEvent.click(screen.getByRole("button", { name: "Validate evidence" }));
+    expect(await screen.findByText("The cited failures do not establish a skill gap.")).toBeInTheDocument();
+    expect(screen.getByText(/Evidence Questioned/)).toBeInTheDocument();
+    expect(screen.getByText("Skill gap is unproven")).toBeInTheDocument();
+    expect(screen.getByText("This diagnosis has not been human validated.")).toBeInTheDocument();
+    expect(mock).toHaveBeenCalledWith(expect.stringContaining("/validate-evidence"), expect.objectContaining({ method: "POST" }));
+  });
+
   it("labels deterministic observations and an unvalidated proposal, without probability language", async () => {
     route();
     render(<ReviewWorkspace />);

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from app.config import get_settings
 from app.diagnostics.engine import DiagnosticService, detect_signals
+from app.diagnostics.evidence_validator import EvidenceValidationService
 from app.design.demo import DemoDesignFixture
 from app.design.service import DesignService
 
@@ -88,11 +89,33 @@ class DemoFixtureReasoner:
         }
 
 
+class DemoFixtureEvidenceValidator:
+    """Fixed synthetic review text for the M4 demo; performs no semantic inference."""
+
+    controlled_fixture = True
+
+    async def validate(self, request):
+        resolution = request["signal"]["criterion"] == "Resolution summary clarity"
+        return {
+            "validation_outcome": "unsupported" if resolution else "supported",
+            "support_assessment": (
+                "The fixed skill-gap proposal exceeds these synthetic structured QA facts."
+                if resolution else "The fixed undetermined proposal is appropriately restrained."),
+            "supported_reference_ids": ["EVID-001"] if resolution else ["SIGNAL-001"],
+            "contradicting_reference_ids": ["EVID-004"] if resolution else [],
+            "unsupported_claims": ["A skill gap is not established by frequency alone."] if resolution else [],
+            "missing_evidence": ["Direct observation of the explanation process"] if resolution else [],
+            "provider_reported_confidence": 0.3 if resolution else 0.8,
+        }
+
+
 if __name__ == "__main__":
     evaluations = fixture_evaluations()
     resolution_signal_id = next(signal.signal_id for signal in detect_signals(evaluations)
                                 if signal.criterion == "Resolution summary clarity")
     app.state.diagnostics = DiagnosticService(evaluations, DemoFixtureReasoner(resolution_signal_id))
+    app.state.evidence_validations = EvidenceValidationService(app.state.diagnostics,
+                                                               DemoFixtureEvidenceValidator())
     app.state.demo_mode = "synthetic_demo"
     fixture = DemoDesignFixture(resolution_signal_id)
     app.state.designs = DesignService(app.state.diagnostics, fixture, fixture, controlled_fixture=True)

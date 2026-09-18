@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
+from copy import deepcopy
 import threading
 from typing import Protocol
 
@@ -266,6 +267,8 @@ class DiagnosticService:
         self.signals = {s.signal_id: s for s in detect_signals(evaluations)}
         self._records: dict[str, DiagnosticRecord] = {}
         self._bundles: dict[str, EvidenceBundle] = {}
+        # Exact provider-safe population prepared for each successful diagnosis.
+        self._provider_snapshots: dict[str, tuple[dict, dict]] = {}
         self._lock = threading.Lock()  # Sync review routes run concurrently in a threadpool.
 
     def list_signals(self) -> list[PerformanceSignal]:
@@ -293,8 +296,14 @@ class DiagnosticService:
 
     async def diagnose(self, signal_id: str) -> DiagnosticRecord:
         bundle = self.evidence(signal_id)
+        provider_view = self.provider_evidence(signal_id)
         try:
-            raw = await self.reasoner.diagnose(self.provider_evidence(signal_id))
+            from .bedrock import BedrockReasoner, provider_safe_payload
+            if isinstance(self.reasoner, BedrockReasoner):
+                raw, prepared = await self.reasoner._diagnose_with_snapshot(provider_view)
+            else:
+                prepared = provider_safe_payload(provider_view)
+                raw = await self.reasoner.diagnose(provider_view)
         except DiagnosticError as exc:
             if isinstance(self.reasoner, UnavailableReasoner):
                 raise
@@ -309,6 +318,7 @@ class DiagnosticService:
                 raise ProviderOutputError("invalid_provider_output", "Hypothesis ID already exists")
             self._records[hypothesis.hypothesis_id] = DiagnosticRecord(provider_hypothesis=hypothesis)
             self._bundles[hypothesis.hypothesis_id] = bundle
+            self._provider_snapshots[hypothesis.hypothesis_id] = deepcopy(prepared)
         return self.get(hypothesis.hypothesis_id)
 
     def _record(self, hypothesis_id: str) -> DiagnosticRecord:

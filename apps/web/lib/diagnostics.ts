@@ -68,6 +68,20 @@ export type RecordState = {
   events: ReviewEvent[];
 };
 
+export type EvidenceValidation = {
+  validation_id: string;
+  hypothesis_id: string;
+  signal_id: string;
+  validation_outcome: "supported" | "partially_supported" | "unsupported" | "insufficient_evidence";
+  semantic_status: "evidence_validated" | "evidence_questioned";
+  support_assessment: string;
+  supported_reference_ids: string[];
+  contradicting_reference_ids: string[];
+  unsupported_claims: string[];
+  missing_evidence: string[];
+  provider_reported_confidence: number;
+};
+
 /** Validated only when the M3 backend recorded an approval; frontend state never sets this. */
 export function validated(record: RecordState): boolean {
   return (
@@ -161,6 +175,16 @@ export function isRecordState(value: unknown): value is RecordState {
     value.events.every(isEvent)
   );
 }
+export function isEvidenceValidation(value: unknown): value is EvidenceValidation {
+  return isRecord(value) && isString(value.validation_id) &&
+    isString(value.hypothesis_id) && isString(value.signal_id) &&
+    ["supported", "partially_supported", "unsupported", "insufficient_evidence"].includes(value.validation_outcome as string) &&
+    ["evidence_validated", "evidence_questioned"].includes(value.semantic_status as string) &&
+    isString(value.support_assessment) && isStringArray(value.supported_reference_ids) &&
+    isStringArray(value.contradicting_reference_ids) &&
+    isStringArray(value.unsupported_claims) && isStringArray(value.missing_evidence) &&
+    typeof value.provider_reported_confidence === "number";
+}
 export function isSignal(value: unknown): value is Signal {
   return (
     isRecord(value) &&
@@ -250,6 +274,9 @@ export async function api<T>(
         "The diagnostic evidence did not match this signal. No diagnosis was saved.",
       reasoner_failure:
         "The diagnostic provider failed. No diagnosis was saved.",
+      validator_unavailable: "No semantic evidence validator is configured.",
+      validator_failure: "The evidence validator failed. No validation was saved.",
+      invalid_validator_output: "The evidence validator returned invalid output. No validation was saved.",
       invalid_state_transition:
         "This review changed or can no longer accept that action. Refresh the diagnosis.",
       backend_unavailable:

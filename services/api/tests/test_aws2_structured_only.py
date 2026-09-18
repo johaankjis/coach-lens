@@ -44,9 +44,11 @@ def test_default_is_structured_only_and_not_configurable():
     assert TRANSMIT_REAL_MINIMIZED_TEXT is False
     assert inspect.signature(prepare_real_evidence).parameters["transmit_minimized_text"].default is False
     # The reasoner's real path calls the preparer without the activation keyword.
-    source = inspect.getsource(BedrockReasoner.diagnose)
+    source = inspect.getsource(BedrockReasoner.prepare_payload)
     assert "prepare_real_evidence(local, evaluations)" in source
     assert "transmit_minimized_text" not in source
+    assert "self.prepare_payload(evidence_bundle)" in inspect.getsource(BedrockReasoner._diagnose_with_snapshot)
+    assert "self._diagnose_with_snapshot(evidence_bundle)" in inspect.getsource(BedrockReasoner.diagnose)
     assert not any(word in field for field in Settings.model_fields
                    for word in ("text", "comment", "safe", "minimized", "allow"))
 

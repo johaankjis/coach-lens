@@ -7,6 +7,7 @@ import {
   api,
   ApiError,
   isEvidenceBundle,
+  isEvidenceValidation,
   isRecordList,
   isRecordState,
   isSignalList,
@@ -15,6 +16,7 @@ import {
   validated,
   type Diagnosis,
   type EvidenceBundle,
+  type EvidenceValidation,
   type EvidenceItem,
   type EvidenceReference,
   type RecordState,
@@ -397,6 +399,7 @@ export default function ReviewWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [signalError, setSignalError] = useState<string | null>(null);
   const [designResult, setDesignResult] = useState<DesignResult | null>(null);
+  const [evidenceValidation, setEvidenceValidation] = useState<EvidenceValidation | null>(null);
   const [designing, setDesigning] = useState(false);
   // Async results are applied only to the signal that was selected when the request started.
   const selectedRef = useRef<string | null>(null);
@@ -419,6 +422,7 @@ export default function ReviewWorkspace() {
     "m4-demo-fixture";
   const currentDiagnosis =
     record?.human_revision ?? record?.provider_hypothesis ?? null;
+  const currentValidation = evidenceValidation?.hypothesis_id === recordId ? evidenceValidation : null;
   const evidenceItem: EvidenceItem | undefined = bundle?.items.find(
     (item) => item.item_id === selectedEvidence?.item_id,
   );
@@ -457,6 +461,7 @@ export default function ReviewWorkspace() {
         setRecords(hypotheses);
         setRecordId(hypotheses[0]?.provider_hypothesis.hypothesis_id ?? null);
         setDesignResult(null);
+        setEvidenceValidation(null);
       })
       .catch((cause) => {
         if (!cancelled) setSignalError((cause as Error).message);
@@ -578,6 +583,21 @@ export default function ReviewWorkspace() {
       if (recordRef.current === id) setError((cause as Error).message);
     } finally {
       setDesigning(false);
+      finish();
+    }
+  }
+  async function validateEvidence() {
+    if (!record || !begin()) return;
+    const id = record.provider_hypothesis.hypothesis_id;
+    try {
+      const result = await api(`${hypothesisPath(id)}/validate-evidence`, isEvidenceValidation,
+        { method: "POST" });
+      if (result.hypothesis_id !== id || result.signal_id !== record.provider_hypothesis.signal_id)
+        throw new Error("The evidence review did not match this diagnosis.");
+      if (recordRef.current === id) setEvidenceValidation(result);
+    } catch (cause) {
+      if (recordRef.current === id) setError((cause as Error).message);
+    } finally {
       finish();
     }
   }
@@ -975,6 +995,27 @@ export default function ReviewWorkspace() {
                               : ""}
                           </div>
                         </section>
+                        <section className="validation" aria-label="Semantic evidence review">
+                          <div className="section-kicker">02A / SEMANTIC EVIDENCE REVIEW</div>
+                          <h2>Evidence support</h2>
+                          {currentValidation ? (
+                            <>
+                              <p><strong>{label(currentValidation.validation_outcome)}</strong> · {label(currentValidation.semantic_status)}</p>
+                              <p>{currentValidation.support_assessment}</p>
+                              <p>Confirmed support: {currentValidation.supported_reference_ids.join(", ") || "None"}</p>
+                              <p>Contradicting evidence: {currentValidation.contradicting_reference_ids.join(", ") || "None"}</p>
+                              {currentValidation.unsupported_claims.length > 0 && <div><h3>Claims beyond the evidence</h3><ul>{currentValidation.unsupported_claims.map((claim, index) => <li key={index}>{claim}</li>)}</ul></div>}
+                              {currentValidation.missing_evidence.length > 0 && <div><h3>Evidence still needed</h3><ul>{currentValidation.missing_evidence.map((gap, index) => <li key={index}>{gap}</li>)}</ul></div>}
+                              <p>This review does not approve the diagnosis. A human reviewer makes the decision below.</p>
+                            </>
+                          ) : (
+                            <>
+                              <p>Review whether the supplied evidence supports the proposed diagnosis.</p>
+                              <button type="button" className="button secondary" disabled={busy}
+                                onClick={() => void validateEvidence()}>Validate evidence</button>
+                            </>
+                          )}
+                        </section>
                         {record.human_revision && (
                           <section className="human-revision">
                             <div className="section-kicker">
@@ -1085,7 +1126,7 @@ export default function ReviewWorkspace() {
                             </>
                           ) : (
                             <>
-                              <h2>This diagnosis has not been validated.</h2>
+                              <h2>This diagnosis has not been human validated.</h2>
                               <p>
                                 Inspect supporting and conflicting evidence
                                 before deciding. Approval accepts the{" "}

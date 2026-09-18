@@ -8,6 +8,7 @@ from app.design.service import design_provider_kind
 from .engine import (DiagnosticError, DiagnosticService, ProviderOutputError, provider_kind,
                      remote_invocation_policy)
 from .models import HumanRevision
+from .evidence_validator import EvidenceValidationService
 
 
 router = APIRouter(prefix="/diagnostics", tags=["diagnostics"])
@@ -25,6 +26,12 @@ def http_error(exc: DiagnosticError) -> HTTPException:
         status = {"signal_not_found": 404, "diagnosis_not_found": 404,
                   "diagnosis_not_approved": 403, "invalid_state_transition": 409,
                   "reasoner_unavailable": 503}.get(exc.code, 422)
+        if exc.code in ("validator_unavailable",):
+            status = 503
+        elif exc.code == "validation_not_found":
+            status = 404
+        elif exc.code == "provider_privacy_blocked":
+            status = 403
     return HTTPException(status_code=status, detail={"code": exc.code, "message": str(exc)})
 
 
@@ -100,6 +107,26 @@ async def diagnose(signal_id: str, svc: DiagnosticService = Depends(service)):
 
 @router.get("/hypotheses/{hypothesis_id}")
 def hypothesis(hypothesis_id: str, svc: DiagnosticService = Depends(service)):
+    try:
+        return svc.get(hypothesis_id)
+    except DiagnosticError as exc:
+        raise http_error(exc) from exc
+
+
+def validation_service(request: Request) -> EvidenceValidationService:
+    return request.app.state.evidence_validations
+
+
+@router.post("/hypotheses/{hypothesis_id}/validate-evidence")
+async def validate_evidence(hypothesis_id: str, svc: EvidenceValidationService = Depends(validation_service)):
+    try:
+        return await svc.run(hypothesis_id)
+    except DiagnosticError as exc:
+        raise http_error(exc) from exc
+
+
+@router.get("/hypotheses/{hypothesis_id}/evidence-validation")
+def evidence_validation(hypothesis_id: str, svc: EvidenceValidationService = Depends(validation_service)):
     try:
         return svc.get(hypothesis_id)
     except DiagnosticError as exc:

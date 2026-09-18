@@ -1,6 +1,6 @@
 # CoachLens AI
 
-CoachLens AI is an evidence-driven performance diagnosis and training platform for the ResultsCX x AWS AI competition. Its planned workflow connects QA evidence to quantitative analysis, human-validated diagnosis, selected interventions, practice, and outcome measurement. Milestone 5 extends the review workspace from Ready for Design through a proposed intervention and, when appropriate, a training outline, activities, and practice specification. Training stops at Ready for Alignment Review. AWS-1 adds a synthetic-only Amazon Bedrock diagnostic adapter; see [the AWS-1 guide](docs/aws1-bedrock-diagnostics.md) for its privacy boundary and smoke procedure.
+CoachLens AI is an evidence-driven performance diagnosis and training platform for the ResultsCX x AWS AI competition. Its planned workflow connects QA evidence to quantitative analysis, human-validated diagnosis, selected interventions, practice, and outcome measurement. Milestone 5 extends the review workspace from Ready for Design through a proposed intervention and, when appropriate, a training outline, activities, and practice specification. Training stops at Ready for Alignment Review. AWS-1 adds a synthetic-only Amazon Bedrock diagnostic adapter; see [the AWS-1 guide](docs/aws1-bedrock-diagnostics.md) for its privacy boundary and smoke procedure. AWS-3 adds [independent semantic evidence review](docs/aws3-semantic-evidence-validator.md) before the human decision.
 
 ## Repository structure
 
