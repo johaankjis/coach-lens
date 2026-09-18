@@ -1,5 +1,6 @@
+import AlignmentCheck from "./alignment-check";
 import { label } from "../lib/diagnostics";
-import type { DesignResult, ProviderMetadata } from "../lib/designs";
+import type { AlignmentReview, DesignResult, ProviderMetadata } from "../lib/designs";
 
 const origin = (fixture: boolean, meta: ProviderMetadata) =>
   `Design origin: ${fixture ? "Controlled non-AI fixture" : "AI-generated proposal"} (${meta.provider}${meta.model ? ` / ${meta.model}` : ""})`;
@@ -163,15 +164,26 @@ function Trace({ result }: { result: DesignResult }) {
 export default function DesignWorkspace({
   result,
   signalLabel,
+  alignmentReview = null,
+  onCheckAlignment,
+  checkingAlignment = false,
+  alignmentDisabled = false,
 }: {
   result: DesignResult;
   signalLabel?: string;
+  // AWS-6: the stored semantic review of this run, when one exists, and the action to request one.
+  alignmentReview?: AlignmentReview | null;
+  onCheckAlignment?: () => void;
+  checkingAlignment?: boolean;
+  alignmentDisabled?: boolean;
 }) {
   const decision = result.intervention;
   const d = result.training_design;
   const fixture = result.generation_mode === "controlled_fixture";
   const diagnosis = result.approved_diagnosis.diagnosis;
   const minutes = d?.outline.reduce((sum, s) => sum + s.duration_minutes, 0);
+  const review = d && alignmentReview?.run_id === result.run_id ? alignmentReview : null;
+  const reviewStatus = review ? (review.design_status === "design_aligned" ? "DESIGN ALIGNED" : "DESIGN QUESTIONED") : null;
   return (
     <section
       className="design-workspace"
@@ -185,7 +197,7 @@ export default function DesignWorkspace({
         </span>
         <div className="design-status" role="status">
           {d
-            ? "READY FOR ALIGNMENT REVIEW"
+            ? reviewStatus ?? "READY FOR ALIGNMENT REVIEW"
             : decision.decision_type === "non_training"
               ? "TRAINING NOT SELECTED"
               : "MORE EVIDENCE NEEDED"}
@@ -223,7 +235,11 @@ export default function DesignWorkspace({
         </div>
         <p className="design-status-note">
           {d
-            ? "Proposed training design; awaiting independent alignment review. No learner has been scored."
+            ? review
+              ? review.design_status === "design_aligned"
+                ? "Proposed training design; the independent alignment review found it addresses the confirmed gap. Not deployed, no outcome measured, no learner scored."
+                : "Proposed training design; the independent alignment review questioned it. Not deployed, no outcome measured, no learner scored."
+              : "Proposed training design; awaiting independent alignment review. No learner has been scored."
             : decision.decision_type === "non_training"
               ? "No training outline, activities, practice, or rubric were generated."
               : "Current evidence is insufficient to select an intervention. No training has been designed."}
@@ -530,6 +546,22 @@ export default function DesignWorkspace({
           </section>
         </>
       )}
+      {d && !review && onCheckAlignment && (
+        <section className="design-section alignment-check pending">
+          <span className="eyebrow">Alignment Check</span>
+          <h3>AI semantic design review</h3>
+          <p className="alignment-scope">
+            The AWS-5 structural trace only proves the references above are consistent. Check Alignment asks an
+            independent reviewer whether the target behavior, objectives, activities, knowledge check, practice, and
+            rubric actually address the confirmed gap and the validated intervention. It does not change the package.
+          </p>
+          <button type="button" className="button primary" disabled={checkingAlignment || alignmentDisabled} onClick={onCheckAlignment}>
+            CHECK ALIGNMENT
+          </button>
+          {checkingAlignment && <p role="status">Reviewing design alignment…</p>}
+        </section>
+      )}
+      {review && <AlignmentCheck review={review} />}
       <section className="design-section next-actions">
         <span className="eyebrow">
           {d ? "Next review step" : "Recommended next action"}

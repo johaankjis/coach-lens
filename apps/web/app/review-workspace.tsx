@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import DesignWorkspace from "./design-workspace";
 import { EvidenceGroup } from "./evidence-links";
 import InterventionPanel from "./intervention-panel";
-import { isDesignResult, type DesignResult } from "../lib/designs";
+import { isAlignmentReview, isDesignResult, type AlignmentReview, type DesignResult } from "../lib/designs";
 import { isInterventionRecord, type InterventionRecord } from "../lib/interventions";
 import {
   api,
@@ -343,6 +343,8 @@ export default function ReviewWorkspace() {
   const [evidenceValidation, setEvidenceValidation] = useState<EvidenceValidation | null>(null);
   const [interventionRecord, setInterventionRecord] = useState<InterventionRecord | null>(null);
   const [designing, setDesigning] = useState(false);
+  const [alignmentReview, setAlignmentReview] = useState<AlignmentReview | null>(null);
+  const [checkingAlignment, setCheckingAlignment] = useState(false);
   const [interventionStep, setInterventionStep] = useState<"propose" | "validate" | null>(null);
   // Async results are applied only to the signal that was selected when the request started.
   const selectedRef = useRef<string | null>(null);
@@ -406,6 +408,7 @@ export default function ReviewWorkspace() {
         setRecords(hypotheses);
         setRecordId(hypotheses[0]?.provider_hypothesis.hypothesis_id ?? null);
         setDesignResult(null);
+        setAlignmentReview(null);
         setEvidenceValidation(null);
         setInterventionRecord(null);
       })
@@ -444,6 +447,18 @@ export default function ReviewWorkspace() {
       .catch((cause) => { if (!cancelled && (!(cause instanceof ApiError) || cause.status !== 404)) setError((cause as Error).message); });
     return () => { cancelled = true; };
   }, [record]);
+  useEffect(() => {
+    // AWS-6: a stored alignment review belongs to one design run. Load it whenever a training
+    // package is shown, so a reviewed run never renders as if the review had not happened.
+    if (!designResult?.training_design) return;
+    const id = designResult.diagnosis_id;
+    const runId = designResult.run_id;
+    let cancelled = false;
+    api(`/diagnoses/${encodeURIComponent(id)}/alignment-review`, isAlignmentReview, undefined, "designs")
+      .then((result) => { if (!cancelled && result.diagnosis_id === id && result.run_id === runId) setAlignmentReview(result); })
+      .catch((cause) => { if (!cancelled && (!(cause instanceof ApiError) || cause.status !== 404)) setError((cause as Error).message); });
+    return () => { cancelled = true; };
+  }, [designResult]);
 
   async function refreshRecord(id: string) {
     const latest = await api(hypothesisPath(id), isRecordState);
@@ -540,11 +555,31 @@ export default function ReviewWorkspace() {
       if (result.diagnosis_id !== id) throw new Error("The design response did not match the selected diagnosis.");
       // A design that finished for a diagnosis the reviewer has since left must not render
       // under another hypothesis; the effect above reloads it when they return.
-      if (selectedRef.current === record.provider_hypothesis.signal_id && recordRef.current === id) setDesignResult(result);
+      if (selectedRef.current === record.provider_hypothesis.signal_id && recordRef.current === id) {
+        setAlignmentReview(null);
+        setDesignResult(result);
+      }
     } catch (cause) {
       if (recordRef.current === id) setError((cause as Error).message);
     } finally {
       setDesigning(false);
+      finish();
+    }
+  }
+  async function checkAlignment() {
+    if (!designResult?.training_design || !begin()) return;
+    const id = designResult.diagnosis_id;
+    const runId = designResult.run_id;
+    setCheckingAlignment(true);
+    try {
+      const result = await api(`/diagnoses/${encodeURIComponent(id)}/alignment-review`, isAlignmentReview,
+        { method: "POST" }, "designs");
+      if (result.diagnosis_id !== id || result.run_id !== runId) throw new Error("The alignment review did not match the displayed design run.");
+      if (recordRef.current === id) setAlignmentReview(result);
+    } catch (cause) {
+      if (recordRef.current === id) setError((cause as Error).message);
+    } finally {
+      setCheckingAlignment(false);
       finish();
     }
   }
@@ -688,6 +723,7 @@ export default function ReviewWorkspace() {
                         setRecords([]);
                         setRecordId(null);
                         setDesignResult(null);
+                        setAlignmentReview(null);
                         setInterventionRecord(null);
                         setSelectedEvidence(null);
                         setAction(null);
@@ -841,6 +877,7 @@ export default function ReviewWorkspace() {
                           onChange={(event) => {
                             setRecordId(event.target.value);
                             setDesignResult(null);
+                            setAlignmentReview(null);
                             setInterventionRecord(null);
                             setSelectedEvidence(null);
                             setAction(null);
@@ -1129,7 +1166,9 @@ export default function ReviewWorkspace() {
                                 <button type="button" className="button primary" disabled={busy || designing} onClick={() => void designIntervention()}>DESIGN INTERVENTION</button>
                               </>}
                               {designing && <p role="status">Designing intervention and learning experience…</p>}
-                              {designResult && <DesignWorkspace result={designResult} signalLabel={selectedSignal.criterion} />}
+                              {designResult && <DesignWorkspace result={designResult} signalLabel={selectedSignal.criterion}
+                                alignmentReview={alignmentReview} checkingAlignment={checkingAlignment}
+                                alignmentDisabled={busy} onCheckAlignment={() => void checkAlignment()} />}
                             </>
                           ) : record.status === "rejected" ? (
                             <>

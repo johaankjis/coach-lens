@@ -555,7 +555,14 @@ def test_synthetic_smoke_script_runs_aws5_only_behind_the_live_aws4_gate(monkeyp
                             lambda region, model, **kw: BedrockSolutionValidator(client=stub("validator", json.dumps(solution_for(alignment)))))
         monkeypatch.setattr(smoke, "BedrockTrainingDesigner",
                             lambda region, model, **kw: BedrockTrainingDesigner(client=stub("designer", json.dumps(package())), **kw))
+        # AWS-6 follows only a generated package; its stub is installed the same way.
+        from app.design.alignment_bedrock import BedrockAlignmentValidator
+        from test_aws6_alignment_validator import alignment_response
+        monkeypatch.setattr(smoke, "BedrockAlignmentValidator",
+                            lambda region, model, **kw: BedrockAlignmentValidator(
+                                client=stub("alignment", json.dumps(alignment_response())), **kw))
         asyncio.run(smoke.main())
         assert len(calls["reasoner"].calls) == 1 and len(calls["validator"].calls) == 1
         assert len(calls["designer"].calls) == (1 if expect_design else 0)
+        assert len(calls["alignment"].calls if "alignment" in calls else []) == (1 if expect_design else 0)
         assert isinstance(calls["diagnosis"], DiagnosticRuntime) and len(calls["diagnosis"].calls) == 1

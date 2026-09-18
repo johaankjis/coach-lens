@@ -313,6 +313,14 @@ export async function api<T>(
       training_design_refused: "The training designer could not use this validated intervention.",
       design_privacy_blocked: "The training design privacy check blocked the provider request.",
       intervention_stale: "The stored intervention no longer matches the validated diagnosis. Refresh the diagnosis.",
+      alignment_review_not_found: "No alignment review has been recorded for this design.",
+      alignment_validator_unavailable: "No alignment validator is configured.",
+      invalid_alignment_output: "The alignment validator returned invalid output. No alignment review was saved.",
+      alignment_validator_failure: "The alignment validator failed. No alignment review was saved.",
+      alignment_privacy_blocked: "The alignment review privacy check blocked the provider request.",
+      no_training_design: "No training package exists to review for this design run.",
+      alignment_review_not_permitted: "Alignment review requires a solution-validated AWS-4 training design.",
+      alignment_review_stale: "The stored alignment review no longer matches the design run. Refresh the diagnosis.",
     };
     throw new ApiError(
       response.status,

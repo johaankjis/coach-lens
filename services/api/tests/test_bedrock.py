@@ -431,7 +431,7 @@ def test_real_mode_with_bedrock_installed_blocks_before_aws(monkeypatch):
         assert mode == {"mode": "real_results_cx", "diagnostic_provider": "provider",
                         "remote_diagnosis": "privacy_blocked", "design_provider": "provider",
                         "intervention_provider": "provider", "solution_validator": "provider",
-                        "evaluation_count": 2, "signal_count": 2}
+                        "alignment_validator": "provider", "evaluation_count": 2, "signal_count": 2}
         runtime = FakeRuntime()
         app.state.diagnostics.reasoner._client = runtime
         signal_id = app.state.diagnostics.list_signals()[0].signal_id

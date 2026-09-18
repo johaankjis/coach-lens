@@ -1,6 +1,6 @@
 import type { Diagnosis, EvidenceReference } from "./diagnostics";
 
-export type ProviderMetadata = { provider: string; model: string | null };
+export type ProviderMetadata = { provider: string; model: string | null; generation_mode?: "provider" | "controlled_fixture" | null };
 
 export type DesignResult = {
   run_id: string;
@@ -95,4 +95,36 @@ export function isDesignResult(v: unknown): v is DesignResult {
   if (decision.decision_type === "non_training") return v.status === "alternative_recommended" && v.training_design === null;
   if (decision.decision_type === "investigate") return v.status === "evidence_required" && v.training_design === null && decision.unresolved_questions.length > 0;
   return false;
+}
+
+// AWS-6: one immutable semantic alignment review of a stored training package. It is an AI (or
+// fixture) judgement, never a human decision; only an overall "aligned" verdict is design_aligned.
+export const ALIGNMENT_OUTCOMES = ["aligned", "partially_aligned", "misaligned", "insufficient_information"] as const;
+export type AlignmentOutcome = (typeof ALIGNMENT_OUTCOMES)[number];
+export const ALIGNMENT_DIMENSIONS = ["gap_to_target_behavior", "target_behavior_to_objective", "objective_to_activity", "objective_to_knowledge_check", "target_behavior_to_practice", "practice_to_rubric", "intervention_to_package"] as const;
+export type AlignmentDimension = (typeof ALIGNMENT_DIMENSIONS)[number];
+export type DimensionReview = { outcome: AlignmentOutcome | "not_applicable"; assessment: string; misaligned_element_ids: string[] };
+export type AlignmentReview = {
+  alignment_review_id: string; run_id: string; diagnosis_id: string; intervention_id: string; solution_validation_id: string;
+  design_digest: string; assessed: "training_design_package"; structural_trace: "structural_references_only";
+  overall_outcome: AlignmentOutcome; design_status: "design_aligned" | "design_questioned"; overall_assessment: string;
+  dimensions: Record<AlignmentDimension, DimensionReview>;
+  misaligned_element_ids: string[]; unsupported_assumptions: string[]; missing_information: string[];
+  provider_reported_confidence: number; provider_metadata: ProviderMetadata; created_at: string;
+};
+
+const dimensionReview = (v: unknown): v is DimensionReview => obj(v) && ([...ALIGNMENT_OUTCOMES, "not_applicable"] as string[]).includes(v.outcome as string) && str(v.assessment) && strings(v.misaligned_element_ids) && ((v.outcome === "aligned" || v.outcome === "not_applicable") ? (v.misaligned_element_ids as string[]).length === 0 : true);
+
+export function isAlignmentReview(v: unknown): v is AlignmentReview {
+  if (!obj(v) || !["alignment_review_id", "run_id", "diagnosis_id", "intervention_id", "solution_validation_id", "design_digest", "overall_assessment", "created_at"].every((key) => str(v[key]))) return false;
+  if (v.assessed !== "training_design_package" || v.structural_trace !== "structural_references_only") return false;
+  if (!ALIGNMENT_OUTCOMES.includes(v.overall_outcome as AlignmentOutcome)) return false;
+  if (v.design_status !== (v.overall_outcome === "aligned" ? "design_aligned" : "design_questioned")) return false;
+  if (!obj(v.dimensions) || !ALIGNMENT_DIMENSIONS.every((name) => dimensionReview((v.dimensions as Record<string, unknown>)[name]))) return false;
+  if (!strings(v.misaligned_element_ids) || !strings(v.unsupported_assumptions) || !strings(v.missing_information)) return false;
+  if (typeof v.provider_reported_confidence !== "number" || !Number.isFinite(v.provider_reported_confidence) || v.provider_reported_confidence < 0 || v.provider_reported_confidence > 1) return false;
+  if (!metadata(v.provider_metadata)) return false;
+  // An aligned verdict cannot name a misaligned element, an unsupported assumption, or a non-aligned dimension.
+  if (v.overall_outcome === "aligned" && (v.misaligned_element_ids.length > 0 || v.unsupported_assumptions.length > 0 || ALIGNMENT_DIMENSIONS.some((name) => !["aligned", "not_applicable"].includes((v.dimensions as Record<string, DimensionReview>)[name].outcome)))) return false;
+  return true;
 }

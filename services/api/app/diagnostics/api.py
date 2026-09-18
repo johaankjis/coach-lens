@@ -61,12 +61,14 @@ def mode(request: Request):
     `remote_diagnosis` says whether the installed reasoner will send evidence off-process;
     `diagnostic_provider: provider` alone never means real remote diagnosis is permitted.
     """
+    from app.design.alignment_service import alignment_provider_kind
     from app.interventions.service import intervention_provider_kind
 
     state = request.app.state
     diagnostics: DiagnosticService = state.diagnostics
     designs = state.designs
     interventions = getattr(state, "interventions", None)
+    alignment_reviews = getattr(state, "alignment_reviews", None)
     return {"mode": state.demo_mode,
             "diagnostic_provider": provider_kind(diagnostics.reasoner),
             "remote_diagnosis": remote_invocation_policy(diagnostics.reasoner),
@@ -75,6 +77,8 @@ def mode(request: Request):
                                       if interventions is not None else "unavailable"),
             "solution_validator": (intervention_provider_kind(interventions.validator)
                                    if interventions is not None else "unavailable"),
+            "alignment_validator": (alignment_provider_kind(alignment_reviews.validator)
+                                    if alignment_reviews is not None else "unavailable"),
             "evaluation_count": len(diagnostics.evaluations),
             "signal_count": len(diagnostics.signals)}
 

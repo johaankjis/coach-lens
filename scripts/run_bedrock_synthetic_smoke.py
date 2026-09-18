@@ -1,11 +1,13 @@
-"""Invoke AWS-1, AWS-3, AWS-4, and AWS-5 with synthetic QA only. Uses the normal AWS credential chain.
+"""Invoke AWS-1, AWS-3, AWS-4, AWS-5, and AWS-6 with synthetic QA only. Uses the normal AWS credential chain.
 
 After the AWS-3 review the script records a synthetic human approval (reviewer "smoke") so the
 AWS-4 Intervention Reasoner and Solution Validator can run on the approved diagnosis. It then
 runs the real M5 design service with the AWS-4 handoff: the AWS-5 Bedrock Training Designer
 is invoked only if the live reasoner proposed a training or practice intervention that the
 live solution review found aligned; otherwise the run reports the withheld or non-training
-outcome. Pass `--skip-intervention` to stop after AWS-3, or `--skip-design` after AWS-4.
+outcome. When a package was generated, the AWS-6 Bedrock Alignment Validator then reviews it
+in one further Converse call and the run reports the design status. Pass `--skip-intervention`
+to stop after AWS-3, `--skip-design` after AWS-4, or `--skip-alignment` after AWS-5.
 """
 
 import argparse
@@ -19,6 +21,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services" / "api"))
 
 from app.config import get_settings  # noqa: E402
+from app.design.alignment_bedrock import BedrockAlignmentValidator  # noqa: E402
+from app.design.alignment_service import AlignmentReviewService  # noqa: E402
 from app.design.bedrock import BedrockTrainingDesigner  # noqa: E402
 from app.design.service import DesignError, DesignService  # noqa: E402
 from app.diagnostics.bedrock import BedrockReasoner  # noqa: E402
@@ -46,7 +50,7 @@ def synthetic_evaluations():
     return evaluations
 
 
-async def main(skip_intervention: bool = False, skip_design: bool = False):
+async def main(skip_intervention: bool = False, skip_design: bool = False, skip_alignment: bool = False):
     settings = get_settings()
     if settings.diagnostic_evaluations_path is not None:
         raise SystemExit("Synthetic smoke refuses a configured local evaluations path")
@@ -167,11 +171,37 @@ async def main(skip_intervention: bool = False, skip_design: bool = False):
                     "missing_operational_details": len(design.missing_operational_details),
                     "alignment_links": len(result.alignment_trace.links)}
     print(summary)
+    if skip_alignment or result.training_design is None:
+        return
+    # AWS-6: an independent semantic review of the stored package. One Converse call; the
+    # review names elements by opaque labels and can only be stored if every reference resolves.
+    alignment_diagnostics = []
+    reviews = AlignmentReviewService(designs, BedrockAlignmentValidator(
+        settings.bedrock_region, settings.bedrock_model_id, diagnostics=service,
+        diagnostic_sink=alignment_diagnostics.append))
+    try:
+        review = await reviews.review(hypothesis.hypothesis_id)
+    except DesignError as exc:
+        if alignment_diagnostics:
+            print({"alignment_response_diagnostic": alignment_diagnostics[-1]})
+        print({"alignment_outcome_aws6": exc.code, "message": str(exc)})
+        return
+    print({"design_status": review.design_status, "overall_outcome": review.overall_outcome,
+           "dimension_outcomes": {name: getattr(review.dimensions, name).outcome
+                                  for name in review.dimensions.model_fields},
+           "misaligned_element_count": len(review.misaligned_element_ids),
+           "unsupported_assumption_count": len(review.unsupported_assumptions),
+           "missing_information_count": len(review.missing_information),
+           "confidence": review.provider_reported_confidence,
+           "structural_trace": review.structural_trace, "provider": review.provider_metadata.provider,
+           "model": review.provider_metadata.model, "design_unchanged": review.design_digest == reviews.get(
+               hypothesis.hypothesis_id).design_digest})
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Synthetic Bedrock smoke for AWS-1, AWS-3, AWS-4, and AWS-5")
+    parser = argparse.ArgumentParser(description="Synthetic Bedrock smoke for AWS-1, AWS-3, AWS-4, AWS-5, and AWS-6")
     parser.add_argument("--skip-intervention", action="store_true", help="Stop after the AWS-3 review")
     parser.add_argument("--skip-design", action="store_true", help="Stop after the AWS-4 solution review")
+    parser.add_argument("--skip-alignment", action="store_true", help="Stop after the AWS-5 training design")
     arguments = parser.parse_args()
-    asyncio.run(main(arguments.skip_intervention, arguments.skip_design))
+    asyncio.run(main(arguments.skip_intervention, arguments.skip_design, arguments.skip_alignment))

@@ -1,6 +1,6 @@
 # Architecture principles
 
-The repository implements deterministic QA analysis (M2), diagnosis and review (M3–M4), Bedrock diagnosis and semantic evidence review (AWS-1 to AWS-3), intervention reasoning and solution validation downstream of human validation (AWS-4), proposed intervention/training orchestration (M5), and provider-backed training package generation for solution-validated training or practice interventions only (AWS-5). These ownership boundaries remain in force.
+The repository implements deterministic QA analysis (M2), diagnosis and review (M3–M4), Bedrock diagnosis and semantic evidence review (AWS-1 to AWS-3), intervention reasoning and solution validation downstream of human validation (AWS-4), proposed intervention/training orchestration (M5), provider-backed training package generation for solution-validated training or practice interventions only (AWS-5), and an independent semantic alignment review of the stored package against the confirmed gap and validated intervention (AWS-6). These ownership boundaries remain in force.
 
 ## Deterministic code owns quantitative truth
 
@@ -16,4 +16,4 @@ Humans approve or correct diagnoses before AWS-4 reasoning and M5 design can run
 
 ## Evidence lineage
 
-M2–M5 contracts preserve references from source QA records through validated calculations, diagnosis hypotheses, human decisions, interventions, and training artifacts. This lineage makes structural provenance inspectable; M6 will evaluate actual design alignment and later outcome measurements against the original evidence.
+M2–M5 contracts preserve references from source QA records through validated calculations, diagnosis hypotheses, human decisions, interventions, and training artifacts. This lineage makes structural provenance inspectable; AWS-6 evaluates actual design alignment over it (see [the AWS-6 guide](aws6-alignment-validator.md)), and outcome measurement against the original evidence remains later work.

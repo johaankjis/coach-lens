@@ -6,6 +6,7 @@ diagnostic service they installed:
     diagnostics -> evidence validator (AWS-3) -> intervention service (AWS-4)
                 -> design service (M5) whose intervention step is the AWS-4 handoff and whose
                    training designer is the AWS-5 Bedrock designer behind the Bedrock flag
+                -> alignment review service (AWS-6) over the stored design results
 
 Building it in one place keeps the services bound to the same active diagnostic service,
 never to a stale import-time instance, and keeps the two startup paths from drifting apart.
@@ -14,6 +15,8 @@ never to a stale import-time instance, and keeps the two startup paths from drif
 from dataclasses import dataclass
 
 from app.config import Settings
+from app.design.alignment_bedrock import BedrockAlignmentValidator
+from app.design.alignment_service import AlignmentReviewService, UnavailableAlignmentValidator
 from app.design.bedrock import BedrockTrainingDesigner
 from app.design.service import DesignService, UnavailableDesignProvider
 from app.diagnostics.engine import DiagnosticService
@@ -31,6 +34,7 @@ class Pipeline:
     evidence_validations: EvidenceValidationService
     interventions: InterventionService
     designs: DesignService
+    alignment_reviews: AlignmentReviewService
 
 
 def build_pipeline(diagnostics: DiagnosticService, settings: Settings) -> Pipeline:
@@ -52,8 +56,11 @@ def build_pipeline(diagnostics: DiagnosticService, settings: Settings) -> Pipeli
     designs = DesignService(
         diagnostics, ValidatedInterventionHandoff(interventions),
         BedrockTrainingDesigner(region, model, diagnostics=diagnostics) if remote else UnavailableDesignProvider())
+    alignment_reviews = AlignmentReviewService(
+        designs,
+        BedrockAlignmentValidator(region, model, diagnostics=diagnostics) if remote else UnavailableAlignmentValidator())
     return Pipeline(diagnostics=diagnostics, evidence_validations=evidence_validations,
-                    interventions=interventions, designs=designs)
+                    interventions=interventions, designs=designs, alignment_reviews=alignment_reviews)
 
 
 def install_pipeline(app, diagnostics: DiagnosticService, settings: Settings) -> Pipeline:
@@ -63,4 +70,5 @@ def install_pipeline(app, diagnostics: DiagnosticService, settings: Settings) ->
     app.state.evidence_validations = pipeline.evidence_validations
     app.state.interventions = pipeline.interventions
     app.state.designs = pipeline.designs
+    app.state.alignment_reviews = pipeline.alignment_reviews
     return pipeline
