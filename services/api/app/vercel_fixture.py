@@ -1,0 +1,120 @@
+"""Synthetic CoachLens deployment fixtures.
+
+Contains synthetic data only. No ResultsCX records are included.
+"""
+
+from datetime import date
+from decimal import Decimal
+from uuid import uuid4
+
+from app.interventions.demo import PROCESS_CRITERION
+from app.results_cx.models import CriterionResult, Domain, Evaluation, SourceLineage
+
+def fixture_evaluations() -> list[Evaluation]:
+    rows = []
+    for number in range(1, 5):
+        passed = number == 4
+        rows.append(Evaluation(
+            internal_id=f"demo_eval_{number:02d}", agent_name=f"Synthetic Agent {number}",
+            qa_name="Synthetic QA Reviewer", team_leader="Synthetic Team Leader",
+            call_date=date(2026, 1, number),
+            criteria=[
+                CriterionResult(domain=Domain.MEMBER_EXPERIENCE, question="Resolution summary clarity",
+                                answer="Yes" if passed else "No", passed=passed,
+                                max_score=Decimal("10"), attained_score=Decimal("10" if passed else "2"),
+                                evaluator_feedback=("Synthetic feedback: summary was clear." if passed else
+                                                    "Synthetic feedback: next steps were unclear."),
+                                lineage=SourceLineage(source_filename="synthetic-demo.xlsx", source_sheet="QA",
+                                                      excel_row=number + 1)),
+                CriterionResult(domain=Domain.BUSINESS_PROCESS, question="Follow-up documented",
+                                answer="Yes", passed=True, max_score=Decimal("5"),
+                                attained_score=Decimal("5"), evaluator_feedback=None,
+                                lineage=SourceLineage(source_filename="synthetic-demo-process.xlsx", source_sheet="QA",
+                                                      excel_row=number + 1)),
+                CriterionResult(domain=Domain.BUSINESS_PROCESS, question=PROCESS_CRITERION,
+                                answer="Yes" if passed else "No", passed=passed,
+                                max_score=Decimal("5"), attained_score=Decimal("5" if passed else "0"),
+                                evaluator_feedback=("Synthetic workflow audit: prompt was available." if passed else
+                                                    "Synthetic workflow audit: required prompt was missing."),
+                                lineage=SourceLineage(source_filename="synthetic-demo-workflow.xlsx", source_sheet="QA",
+                                                      excel_row=number + 1)),
+            ]))
+    return rows
+
+
+class DemoFixtureReasoner:
+    """Fixed fixture using bundle IDs only for valid citations; performs no inference."""
+
+    controlled_fixture = True  # Reported by /diagnostics/mode from the object, not the label.
+
+    def __init__(self, resolution_signal_id: str):
+        self.resolution_signal_id = resolution_signal_id
+
+    async def diagnose(self, evidence_bundle):
+        items = evidence_bundle.items
+        reference = lambda item: {"item_id": item.item_id, "evaluation_id": item.evaluation_id}  # noqa: E731
+        if evidence_bundle.signal.criterion == PROCESS_CRITERION:
+            failed = next(item for item in items if not item.passed)
+            return {
+                "hypothesis_id": f"demo_hyp_{uuid4().hex}",
+                "signal_id": evidence_bundle.signal.signal_id,
+                "observed_behavioral_defect": "Synthetic workflow audits show the required follow-up prompt was unavailable on three checks.",
+                "cause_domain": "process_gap", "performance_dimension": "undetermined",
+                "explanation": "Fixed synthetic scenario: the approved workflow lacks the prompt agents need. This cause is fixture context, not inferred from the failure count.",
+                "supporting_evidence": [{"item_id": failed.item_id, "evaluation_id": failed.evaluation_id}],
+                "conflicting_evidence": [],
+                "missing_evidence": ["Confirm that the deployed workflow still lacks the prompt."],
+                "provider_reported_confidence": "0.65",
+                "provider_metadata": {"provider": "m4-demo-fixture", "model": None},
+            }
+        if evidence_bundle.signal.signal_id != self.resolution_signal_id:
+            return {
+                "hypothesis_id": f"demo_hyp_{uuid4().hex}",
+                "signal_id": evidence_bundle.signal.signal_id,
+                "observed_behavioral_defect": "Synthetic QA records show no failed follow-up checks.",
+                "cause_domain": "undetermined", "performance_dimension": "undetermined",
+                "explanation": "Fixed demonstration text does not propose a cause for this all-pass signal.",
+                "supporting_evidence": [{"item_id": "signal", "evaluation_id": None}],
+                "conflicting_evidence": [],
+                "missing_evidence": ["No failed criterion rows are present in this fixture."],
+                "provider_reported_confidence": "0",
+                "provider_metadata": {"provider": "m4-demo-fixture", "model": None},
+            }
+        failed = next(item for item in items if not item.passed)
+        passed = next(item for item in items if item.passed)
+        return {
+            "hypothesis_id": f"demo_hyp_{uuid4().hex}",
+            "signal_id": evidence_bundle.signal.signal_id,
+            "observed_behavioral_defect": "Synthetic QA records show missed clarity checks.",
+            "cause_domain": "skill_gap", "performance_dimension": "capability",
+            "explanation": "Fixed demonstration text proposes a skill gap. It is deliberately not inferred from the QA rows.",
+            "supporting_evidence": [reference(failed)],
+            "conflicting_evidence": [reference(passed)],
+            "missing_evidence": ["No direct observation of the agent's explanation process is in this fixture."],
+            "provider_reported_confidence": "0.78",
+            "provider_metadata": {"provider": "m4-demo-fixture", "model": None},
+        }
+
+
+class DemoFixtureEvidenceValidator:
+    """Fixed synthetic review text for the M4 demo; performs no semantic inference."""
+
+    controlled_fixture = True
+
+    async def validate(self, request):
+        resolution = request["signal"]["criterion"] == "Resolution summary clarity"
+        process = request["signal"]["criterion"] == PROCESS_CRITERION
+        return {
+            "validation_outcome": "unsupported" if resolution else "supported",
+            "support_assessment": (
+                "The fixed skill-gap proposal exceeds these synthetic structured QA facts."
+                if resolution else "The fixed workflow audit supports a process issue, subject to checking the deployed workflow."
+                if process else "The fixed undetermined proposal is appropriately restrained."),
+            "supported_reference_ids": ["EVID-001"] if resolution or process else ["SIGNAL-001"],
+            "contradicting_reference_ids": ["EVID-004"] if resolution else [],
+            "unsupported_claims": ["A skill gap is not established by frequency alone."] if resolution else [],
+            "missing_evidence": ["Direct observation of the explanation process"] if resolution else [],
+            "provider_reported_confidence": 0.3 if resolution else 0.8,
+        }
+
+

@@ -1,0 +1,48 @@
+{
+  "services": {
+    "frontend": {
+      "root": "apps/web/",
+      "framework": "nextjs"
+    },
+    "backend": {
+      "root": "services/api/",
+      "entrypoint": "app.vercel_main:app"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/diagnostics/:path*",
+      "destination": {
+        "service": "backend",
+        "path": "/diagnostics/:path*"
+      }
+    },
+    {
+      "source": "/api/designs/:path*",
+      "destination": {
+        "service": "backend",
+        "path": "/designs/:path*"
+      }
+    },
+    {
+      "source": "/api/interventions/:path*",
+      "destination": {
+        "service": "backend",
+        "path": "/interventions/:path*"
+      }
+    },
+    {
+      "source": "/api/health",
+      "destination": {
+        "service": "backend",
+        "path": "/health"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "frontend"
+      }
+    }
+  ]
+}
