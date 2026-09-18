@@ -1212,3 +1212,18 @@ textarea {
 .design-section .quiet { font-size: 14px; }
 .evidence-link { min-height: 44px; }
 .design-observation { margin: -8px 0 16px; color: #41645e; font-size: 14px; }
+/* AWS-4 stages. The intervention and solution reviews are model outputs beside the human decision, so they
+   share the working-diagnosis frame but never its teal "validated" accent unless the solution was validated. */
+.intervention-dot { background: #6b4fa0; }
+.solution-dot { background: #1f6f8b; }
+.intervention-verdict { border-left-color: #6b4fa0; background: #f3effa; }
+.intervention-verdict span { color: #4d3580; }
+.intervention-recommendation { font-size: 18px; line-height: 1.45; font-weight: 700; margin: 12px 0 6px; }
+.solution-verdict { border-left-color: #1f6f8b; background: #eaf4f8; }
+.solution-verdict span { color: #175a70; }
+.solution-verdict.questioned { border-left-color: #c2831c; background: var(--amber-soft); }
+.solution-verdict.questioned span { color: #80551c; }
+.handoff-note { padding: 12px 15px; background: #f2f6f5; border-left: 3px solid #9fb8b3; font-size: 14px; }
+.handoff-note.withheld { border-left-color: #c2831c; background: var(--amber-soft); }
+.handoff-note.permitted { border-left-color: var(--teal); }
+.design-withheld { padding: 12px 15px; margin-top: 14px; border-left: 3px solid #c2831c; background: var(--amber-soft); font-size: 14px; }

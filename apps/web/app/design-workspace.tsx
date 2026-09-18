@@ -63,6 +63,17 @@ function Trace({ result }: { result: DesignResult }) {
                 .join("; ") || "None cited"}
             </dd>
           </div>
+          {decision.intervention_id && (
+            <div>
+              <dt>Intervention record</dt>
+              <dd>
+                {decision.intervention_id}
+                {decision.solution_validation_id
+                  ? ` → solution review ${decision.solution_validation_id}`
+                  : ""}
+              </dd>
+            </div>
+          )}
           <div>
             <dt>Decision provider</dt>
             <dd>
@@ -199,6 +210,15 @@ export default function DesignWorkspace({
             Working diagnosis: {label(diagnosis.cause_domain)} ·{" "}
             {label(diagnosis.performance_dimension)} <b>Human validated</b>
           </span>
+          {decision.intervention_type && (
+            <span>
+              Validated intervention: {label(decision.intervention_type)}
+              {decision.solution_alignment
+                ? ` · solution review ${label(decision.solution_alignment)}`
+                : ""}{" "}
+              <b>Not human validated</b>
+            </span>
+          )}
           {d && <span>{minutes} min learning plan</span>}
         </div>
         <p className="design-status-note">

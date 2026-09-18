@@ -10,6 +10,9 @@ export type DesignResult = {
   approved_diagnosis: { hypothesis_id: string; signal_id: string; diagnosis: Diagnosis; human_revised: boolean };
   intervention: {
     run_id: string; diagnosis_id: string; decision_type: "training" | "non_training" | "investigate";
+    // AWS-4 handoff fields; absent or null for pre-AWS-4 providers and fixtures.
+    intervention_type?: string | null; target_change?: string | null; solution_alignment?: string | null;
+    intervention_id?: string | null; solution_validation_id?: string | null;
     rationale: string; evidence_refs: EvidenceReference[]; risks: string[]; unresolved_questions: string[];
     next_actions: { action_id: string; title: string; instructions: string }[];
     provider_metadata: ProviderMetadata;
@@ -52,6 +55,8 @@ export function isDesignResult(v: unknown): v is DesignResult {
   if (!str(approved.hypothesis_id) || approved.hypothesis_id !== v.diagnosis_id || !str(approved.signal_id) || !obj(approved.diagnosis) || typeof approved.human_revised !== "boolean") return false;
   if (!["observed_behavioral_defect", "cause_domain", "performance_dimension", "explanation"].every((key) => str((approved.diagnosis as Record<string, unknown>)[key])) || !refs(approved.diagnosis.supporting_evidence) || !refs(approved.diagnosis.conflicting_evidence) || !strings(approved.diagnosis.missing_evidence)) return false;
   if (!str(decision.run_id) || decision.run_id !== v.run_id || decision.diagnosis_id !== v.diagnosis_id || !str(decision.rationale) || !refs(decision.evidence_refs) || !strings(decision.risks) || !strings(decision.unresolved_questions) || !nonEmpty(decision.next_actions, action) || !metadata(decision.provider_metadata)) return false;
+  for (const key of ["intervention_type", "target_change", "solution_alignment", "intervention_id", "solution_validation_id"])
+    if (decision[key] !== undefined && decision[key] !== null && !str(decision[key])) return false;
   if (decision.decision_type === "training") return v.status === "ready_for_alignment_review" && training(v.training_design) && v.training_design.run_id === v.run_id && v.training_design.diagnosis_id === v.diagnosis_id;
   if (decision.decision_type === "non_training") return v.status === "alternative_recommended" && v.training_design === null;
   if (decision.decision_type === "investigate") return v.status === "evidence_required" && v.training_design === null && decision.unresolved_questions.length > 0;

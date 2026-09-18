@@ -10,6 +10,10 @@ from app.diagnostics.evidence_validator import (BedrockEvidenceValidator,
                                                  EvidenceValidationService,
                                                  UnavailableEvidenceValidator)
 from app.diagnostics.evidence_policy import population_digest
+from app.interventions.bedrock import BedrockInterventionReasoner, BedrockSolutionValidator
+from app.interventions.handoff import ValidatedInterventionHandoff
+from app.interventions.service import (InterventionService, UnavailableInterventionReasoner,
+                                       UnavailableSolutionValidator)
 
 from .models import Domain, Evaluation
 from .pipeline import PipelineValidationError, discover_sources, normalize
@@ -109,6 +113,14 @@ def install_results_cx_demo(app, evaluations: list[Evaluation]) -> None:
         app.state.diagnostics,
         BedrockEvidenceValidator(settings.bedrock_region, settings.bedrock_model_id)
         if settings.bedrock_enabled else UnavailableEvidenceValidator())
-    unavailable = UnavailableDesignProvider()
-    app.state.designs = DesignService(app.state.diagnostics, unavailable, unavailable)
+    # AWS-4 follows the same switch and the same trusted-population gate as AWS-3; M5 reads
+    # its record. The training designer stays unavailable in this demo.
+    app.state.interventions = InterventionService(
+        app.state.diagnostics, app.state.evidence_validations,
+        BedrockInterventionReasoner(settings.bedrock_region, settings.bedrock_model_id)
+        if settings.bedrock_enabled else UnavailableInterventionReasoner(),
+        BedrockSolutionValidator(settings.bedrock_region, settings.bedrock_model_id)
+        if settings.bedrock_enabled else UnavailableSolutionValidator())
+    app.state.designs = DesignService(app.state.diagnostics, ValidatedInterventionHandoff(app.state.interventions),
+                                      UnavailableDesignProvider())
     app.state.demo_mode = REAL_MODE

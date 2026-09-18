@@ -15,6 +15,9 @@ import pytest
 from app.config import Settings
 from app.design.demo import DemoDesignFixture
 from app.design.service import DesignError, DesignService, UnavailableDesignProvider
+from app.interventions.handoff import ValidatedInterventionHandoff
+from app.interventions.service import (UnavailableInterventionReasoner,
+                                       UnavailableSolutionValidator)
 from app.diagnostics.engine import (ControlledTestReasoner, DiagnosticError, DiagnosticService,
                                     UnavailableReasoner, build_bundle, detect_signals)
 from app.main import app
@@ -197,12 +200,18 @@ def test_installed_real_mode_http_surface_stops_at_diagnosis(tmp_path, monkeypat
     generated_sources(root)
     demo.install_results_cx_demo(app_state, demo.load_results_cx_demo(root))
     assert isinstance(app_state.state.diagnostics.reasoner, UnavailableReasoner)
-    assert isinstance(app_state.state.designs.intervention, UnavailableDesignProvider)
+    # AWS-4: the M5 intervention step reads the intervention record; the reasoner behind it and
+    # the training designer are both unavailable here.
+    assert isinstance(app_state.state.designs.intervention, ValidatedInterventionHandoff)
+    assert isinstance(app_state.state.interventions.reasoner, UnavailableInterventionReasoner)
+    assert isinstance(app_state.state.interventions.validator, UnavailableSolutionValidator)
+    assert app_state.state.interventions.diagnostics is app_state.state.diagnostics
     assert isinstance(app_state.state.designs.training, UnavailableDesignProvider)
     client = TestClient(app_state)
     assert client.get("/diagnostics/mode").json() == {
         "mode": "real_results_cx", "diagnostic_provider": "unavailable", "remote_diagnosis": "unavailable",
-        "design_provider": "unavailable", "evaluation_count": 2, "signal_count": 6}
+        "design_provider": "unavailable", "intervention_provider": "unavailable",
+        "solution_validator": "unavailable", "evaluation_count": 2, "signal_count": 6}
     signals = client.get("/diagnostics/signals").json()
     assert [s["signal_id"] for s in signals] == [
         s.signal_id for s in app_state.state.diagnostics.list_signals()]
@@ -231,14 +240,16 @@ def test_mode_endpoint_reports_installed_providers_not_the_label(app_state):
     app_state.state.diagnostics = DiagnosticService([], UnavailableReasoner())
     unavailable = UnavailableDesignProvider()
     app_state.state.designs = DesignService(app_state.state.diagnostics, unavailable, unavailable)
-    assert TestClient(app_state).get("/diagnostics/mode").json() == {
+    mode = TestClient(app_state).get("/diagnostics/mode").json()
+    assert {key: mode[key] for key in mode if key not in ("intervention_provider", "solution_validator")} == {
         "mode": "synthetic_demo", "diagnostic_provider": "unavailable", "remote_diagnosis": "unavailable",
         "design_provider": "unavailable", "evaluation_count": 0, "signal_count": 0}
     fixture = DemoDesignFixture("sig_none")
     app_state.state.diagnostics = DiagnosticService([], ControlledTestReasoner({}))
     app_state.state.designs = DesignService(app_state.state.diagnostics, fixture, fixture,
                                             controlled_fixture=True)
-    assert TestClient(app_state).get("/diagnostics/mode").json() == {
+    mode = TestClient(app_state).get("/diagnostics/mode").json()
+    assert {key: mode[key] for key in mode if key not in ("intervention_provider", "solution_validator")} == {
         "mode": "synthetic_demo", "diagnostic_provider": "controlled_fixture",
         "remote_diagnosis": "local_fixture",
         "design_provider": "controlled_fixture", "evaluation_count": 0, "signal_count": 0}
@@ -292,7 +303,8 @@ def test_default_app_mode_is_unconfigured_with_no_providers():
     assert app.state.demo_mode == "unconfigured"
     assert TestClient(app).get("/diagnostics/mode").json() == {
         "mode": "unconfigured", "diagnostic_provider": "unavailable", "remote_diagnosis": "unavailable",
-        "design_provider": "unavailable", "evaluation_count": 0, "signal_count": 0}
+        "design_provider": "unavailable", "intervention_provider": "unavailable",
+        "solution_validator": "unavailable", "evaluation_count": 0, "signal_count": 0}
 
 
 def test_confidential_paths_are_ignored_and_not_tracked():

@@ -33,6 +33,30 @@ class UnavailableDesignProvider:
         raise DesignError("design_provider_unavailable", "No training provider is configured")
 
 
+# Design errors that pass to a client with their own code, each with the only message text
+# allowed for it. Any other DesignError a provider raises is reported as a generic failure.
+PASSTHROUGH_DESIGN_ERRORS = {
+    "design_provider_unavailable": "No design provider is configured",
+    # AWS-4 handoff preconditions (see app.interventions.handoff).
+    "intervention_not_proposed": "Propose and validate an intervention before design",
+    "solution_not_validated": "Validate the proposed intervention before design",
+    "training_design_withheld": "Training design withheld: the solution review questioned the proposed training",
+    "intervention_stale": "The stored intervention does not match the current validated diagnosis",
+}
+
+
+def _provider_kind(provider: object) -> str:
+    if isinstance(provider, UnavailableDesignProvider):
+        return "unavailable"
+    # An AWS-4 handoff adapter has no provider of its own; it classifies the installed
+    # intervention reasoner object it reads from, using the same object-based rules.
+    upstream = getattr(provider, "upstream_provider_kind", None)
+    if callable(upstream):
+        kind = upstream()
+        return kind if kind in ("unavailable", "controlled_fixture") else "provider"
+    return "controlled_fixture" if getattr(provider, "controlled_fixture", False) is True else "provider"
+
+
 def design_provider_kind(intervention: object, training: object) -> str:
     """Classify the installed design providers from the objects, never from a label.
 
@@ -41,14 +65,7 @@ def design_provider_kind(intervention: object, training: object) -> str:
     "controlled_fixture"; anything else is a real "provider", so a remote provider can never
     be reported or recorded as a non-AI fixture.
     """
-    kinds = set()
-    for provider in (intervention, training):
-        if isinstance(provider, UnavailableDesignProvider):
-            kinds.add("unavailable")
-        elif getattr(provider, "controlled_fixture", False) is True:
-            kinds.add("controlled_fixture")
-        else:
-            kinds.add("provider")
+    kinds = {_provider_kind(intervention), _provider_kind(training)}
     if "provider" in kinds:
         return "provider"
     if "controlled_fixture" in kinds:
@@ -109,11 +126,12 @@ class DesignService:
             except InvalidDesignOutput as exc:
                 raise DesignError("invalid_design_output", "Design provider returned invalid output") from exc
             except DesignError as exc:
-                # Only the service's own "not configured" signal passes through. Any other
+                # Only the service's own "not configured" signal and the AWS-4 handoff
+                # preconditions pass through, each with a fixed message. Any other
                 # provider-raised DesignError is treated as a failure so its text never
                 # reaches a client response.
-                if exc.code == "design_provider_unavailable":
-                    raise
+                if exc.code in PASSTHROUGH_DESIGN_ERRORS:
+                    raise DesignError(exc.code, PASSTHROUGH_DESIGN_ERRORS[exc.code]) from exc
                 raise DesignError("design_provider_failure", "Design provider failed") from exc
             except Exception as exc:
                 raise DesignError("design_provider_failure", "Design provider failed") from exc

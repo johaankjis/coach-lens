@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReviewWorkspace from "../app/review-workspace";
 import type { EvidenceBundle, EvidenceValidation, RecordState, Signal } from "../lib/diagnostics";
 import { designFixture } from "./design-workspace.test-fixture";
+import { interventionFixture } from "./intervention-workspace.test-fixture";
 
 const signal: Signal = {
   signal_id: "sig_1",
@@ -91,6 +92,7 @@ function route(
     if (path.endsWith("/evidence-validation")) return storedValidation
       ? reply(storedValidation) : reply({ detail: { code: "validation_not_found" } }, 404);
     if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
+    if (path.includes("/api/interventions/")) return reply({ detail: { code: "intervention_not_found" } }, 404);
     throw new Error(`Unexpected route ${path}`);
   });
   vi.stubGlobal("fetch", mock);
@@ -831,6 +833,7 @@ describe("M5 orchestration in the review workspace", () => {
       if (path.endsWith("/evidence-validation")) return reply({ detail: { code: "validation_not_found" } }, 404);
       if (path.includes("/api/designs/") && init?.method === "POST") return pending;
       if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
+      if (path.includes("/api/interventions/")) return reply(interventionFixture());
       throw new Error(path);
     });
     vi.stubGlobal("fetch", mock);
@@ -859,6 +862,7 @@ describe("M5 orchestration in the review workspace", () => {
       if (path.endsWith("/evidence-validation")) return reply({ detail: { code: "validation_not_found" } }, 404);
       if (path.includes("/api/designs/") && init?.method === "POST") return pending;
       if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
+      if (path.includes("/api/interventions/")) return reply(interventionFixture());
       throw new Error(path);
     }));
     render(<ReviewWorkspace />);
@@ -881,6 +885,7 @@ describe("M5 orchestration in the review workspace", () => {
       if (path.endsWith("/evidence-validation")) return reply({ detail: { code: "validation_not_found" } }, 404);
       if (path.includes("/api/designs/") && init?.method === "POST") return reply(response, status);
       if (path.includes("/api/designs/")) return reply({ detail: { code: "design_not_found" } }, 404);
+      if (path.includes("/api/interventions/")) return reply(interventionFixture());
       throw new Error(path);
     }));
     render(<ReviewWorkspace />);

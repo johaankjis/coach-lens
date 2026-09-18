@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
         source: "/api/designs/:path*",
         destination: `${process.env.COACHLENS_API_ORIGIN ?? "http://127.0.0.1:8000"}/designs/:path*`,
       },
+      {
+        source: "/api/interventions/:path*",
+        destination: `${process.env.COACHLENS_API_ORIGIN ?? "http://127.0.0.1:8000"}/interventions/:path*`,
+      },
     ];
   },
 };

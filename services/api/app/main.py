@@ -13,6 +13,11 @@ from app.diagnostics.bedrock import BedrockReasoner
 from app.diagnostics.evidence_validator import (BedrockEvidenceValidator,
                                                  EvidenceValidationService,
                                                  UnavailableEvidenceValidator)
+from app.interventions.api import router as intervention_router
+from app.interventions.bedrock import BedrockInterventionReasoner, BedrockSolutionValidator
+from app.interventions.handoff import ValidatedInterventionHandoff
+from app.interventions.service import (InterventionService, UnavailableInterventionReasoner,
+                                       UnavailableSolutionValidator)
 
 
 class HealthResponse(BaseModel):
@@ -42,10 +47,19 @@ app.state.evidence_validations = EvidenceValidationService(
     if settings.bedrock_enabled else UnavailableEvidenceValidator(),
 )
 app.state.demo_mode = "local_normalized" if settings.diagnostic_evaluations_path else "unconfigured"
-unavailable_design = UnavailableDesignProvider()
-app.state.designs = DesignService(app.state.diagnostics, unavailable_design, unavailable_design)
+# AWS-4: the intervention reasoner and solution validator follow the same Bedrock switch; the
+# M5 intervention step reads their stored record instead of deciding on its own.
+app.state.interventions = InterventionService(
+    app.state.diagnostics, app.state.evidence_validations,
+    BedrockInterventionReasoner(settings.bedrock_region, settings.bedrock_model_id)
+    if settings.bedrock_enabled else UnavailableInterventionReasoner(),
+    BedrockSolutionValidator(settings.bedrock_region, settings.bedrock_model_id)
+    if settings.bedrock_enabled else UnavailableSolutionValidator())
+app.state.designs = DesignService(app.state.diagnostics, ValidatedInterventionHandoff(app.state.interventions),
+                                  UnavailableDesignProvider())
 app.include_router(diagnostics_router)
 app.include_router(design_router)
+app.include_router(intervention_router)
 
 
 @app.get("/health", response_model=HealthResponse)

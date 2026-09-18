@@ -27,9 +27,10 @@ def main() -> int:
     import uvicorn
 
     install_results_cx_demo(app, evaluations)
-    diagnostic_state = ("Bedrock diagnostic provider with AWS-2 structured evidence only; evaluator comments stay local"
-                        if get_settings().bedrock_enabled else "diagnostic provider unavailable")
-    print(f"Mode: REAL RESULTS CX (local data; {diagnostic_state}; design providers unavailable)", flush=True)
+    diagnostic_state = ("Bedrock diagnostic, evidence-review, intervention, and solution-review providers with AWS-2 "
+                        "structured evidence only; evaluator comments stay local"
+                        if get_settings().bedrock_enabled else "diagnostic and intervention providers unavailable")
+    print(f"Mode: REAL RESULTS CX (local data; {diagnostic_state}; training designer unavailable)", flush=True)
     print(f"Loaded {len(evaluations)} evaluations, "
           f"{sum(len(e.criteria) for e in evaluations)} criterion records, "
           f"{len(app.state.diagnostics.signals)} observed signals", flush=True)

@@ -242,7 +242,7 @@ export async function api<T>(
   path: string,
   guard: (value: unknown) => value is T,
   options?: RequestInit,
-  base: "diagnostics" | "designs" = "diagnostics",
+  base: "diagnostics" | "designs" | "interventions" = "diagnostics",
 ): Promise<T> {
   let response: Response;
   try {
@@ -298,6 +298,17 @@ export async function api<T>(
         "The design provider failed. No design was saved.",
       diagnosis_not_approved:
         "A human-approved diagnosis is required before design can start.",
+      intervention_provider_unavailable: "No intervention reasoner is configured.",
+      solution_validator_unavailable: "No solution validator is configured.",
+      invalid_intervention_output: "The intervention reasoner returned invalid output. No intervention was saved.",
+      intervention_provider_failure: "The intervention reasoner failed. No intervention was saved.",
+      invalid_solution_output: "The solution validator returned invalid output. No solution review was saved.",
+      solution_validator_failure: "The solution validator failed. No solution review was saved.",
+      intervention_not_found: "No intervention has been proposed for this diagnosis.",
+      intervention_not_proposed: "Propose and validate an intervention before design.",
+      solution_not_validated: "Validate the proposed intervention before design.",
+      training_design_withheld: "Training design is withheld because the solution review questioned the proposed training.",
+      intervention_stale: "The stored intervention no longer matches the validated diagnosis. Refresh the diagnosis.",
     };
     throw new ApiError(
       response.status,

@@ -51,10 +51,28 @@ class NextAction(FrozenModel):
     instructions: DesignText
 
 
+# AWS-4 intervention types projected onto `DecisionType`. Kept here (not imported from the
+# interventions package) so the M5 contract has no upward dependency.
+INTERVENTION_TYPES_BY_DECISION = {
+    DecisionType.TRAINING: ("training", "practice_simulation"),
+    DecisionType.NON_TRAINING: ("coaching", "process_correction"),
+    DecisionType.INVESTIGATE: ("investigate_further",),
+}
+SOLUTION_ALIGNMENTS = ("aligned", "partially_aligned", "misaligned", "insufficient_evidence")
+
+
 class InterventionDecision(FrozenModel):
     run_id: DesignId
     diagnosis_id: DesignId
     decision_type: DecisionType
+    # AWS-4 handoff fields. Optional so pre-AWS-4 fixtures and providers remain valid; when
+    # present they must agree with `decision_type` and are what AWS-5 should read first.
+    intervention_type: Literal["training", "practice_simulation", "coaching", "process_correction",
+                               "investigate_further"] | None = None
+    target_change: DesignText | None = None
+    solution_alignment: Literal["aligned", "partially_aligned", "misaligned", "insufficient_evidence"] | None = None
+    intervention_id: DesignId | None = None
+    solution_validation_id: DesignId | None = None
     rationale: DesignText
     evidence_refs: tuple[EvidenceReference, ...] = Field(min_length=1, max_length=MAX_ITEMS)
     risks: tuple[DesignText, ...] = Field(default=(), max_length=MAX_ITEMS)
@@ -63,6 +81,13 @@ class InterventionDecision(FrozenModel):
     # Provider self-identification for audit. It is not a trust signal: the service, not
     # the provider, assigns `DesignResult.generation_mode`.
     provider_metadata: ProviderMetadata
+
+    @model_validator(mode="after")
+    def consistent_intervention_type(self):
+        if (self.intervention_type is not None and
+                self.intervention_type not in INTERVENTION_TYPES_BY_DECISION[self.decision_type]):
+            raise ValueError("Intervention type and decision type disagree")
+        return self
 
 
 class TargetBehavior(FrozenModel):

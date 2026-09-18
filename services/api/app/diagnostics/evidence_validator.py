@@ -235,17 +235,22 @@ def _sensitive_diagnosis_text(diagnostics: DiagnosticService, texts: list[str]) 
     return bool(_LOCAL_ID_PATTERN.search(joined))
 
 
-def build_validation_request(diagnostics: DiagnosticService, hypothesis_id: str) -> tuple[dict, set[str], dict]:
+def load_provider_population(diagnostics: DiagnosticService, hypothesis_id: str):
+    """Re-verify and return the exact provider-safe population saved for one hypothesis.
+
+    Shared by AWS-3 and AWS-4: local facts are rebuilt and compared with the stored bundle,
+    the saved allowlisted projection is compared with a fresh projection, and the opaque
+    reference lookup is checked against the bundle. Returns the stored record (live object,
+    read-only by convention), the bundle, a deep copy of the wire snapshot, a deep copy of
+    the local lookup, and the set of references that exist in the population.
+    """
     with diagnostics._lock:
         record = diagnostics._record(hypothesis_id)
-        if record.status != "awaiting_review":
-            raise DiagnosticError("invalid_state_transition", "Evidence review requires a proposed diagnosis")
         hypothesis = record.provider_hypothesis
         bundle = diagnostics._bundles[hypothesis_id]
         snapshot, lookup = deepcopy(diagnostics._provider_snapshots[hypothesis_id])
     if hypothesis.signal_id != bundle.signal.signal_id or bundle.signal.signal_id not in diagnostics.signals:
         raise DiagnosticError("evidence_mismatch", "Diagnosis and signal disagree")
-    validate_citations(hypothesis.supporting_evidence, hypothesis.conflicting_evidence, bundle)
     # Rebuild local facts before using the saved provider-safe population.
     if diagnostics.evidence(hypothesis.signal_id) != bundle:
         raise DiagnosticError("evidence_mismatch", "Evidence population changed")
@@ -269,6 +274,26 @@ def build_validation_request(diagnostics: DiagnosticService, hypothesis_id: str)
                                          for number, item in enumerate(bundle.items, 1)) \
             or lookup["SIGNAL-001"] != ("signal", None):
         raise DiagnosticError("evidence_mismatch", "Evidence reference mapping changed")
+    return record, bundle, snapshot, lookup, expected_refs
+
+
+def default_text_coverage(bundle) -> dict:
+    """Coverage for a synthetic snapshot that carried none: every local comment was withheld."""
+    return {"total_evidence_items": len(bundle.items),
+            "evidence_items_with_feedback": bundle.signal.feedback_count,
+            "minimized_text_items_allowed": 0,
+            "text_items_blocked": bundle.signal.feedback_count,
+            "text_items_with_no_text": len(bundle.items) - bundle.signal.feedback_count}
+
+
+def build_validation_request(diagnostics: DiagnosticService, hypothesis_id: str) -> tuple[dict, set[str], dict]:
+    with diagnostics._lock:
+        record = diagnostics._record(hypothesis_id)
+        if record.status != "awaiting_review":
+            raise DiagnosticError("invalid_state_transition", "Evidence review requires a proposed diagnosis")
+        hypothesis = record.provider_hypothesis
+    _, bundle, snapshot, lookup, expected_refs = load_provider_population(diagnostics, hypothesis_id)
+    validate_citations(hypothesis.supporting_evidence, hypothesis.conflicting_evidence, bundle)
     reverse = {value: key for key, value in lookup.items()}
     supporting = [reverse[(ref.item_id, ref.evaluation_id)] for ref in hypothesis.supporting_evidence]
     conflicting = [reverse[(ref.item_id, ref.evaluation_id)] for ref in hypothesis.conflicting_evidence]
@@ -283,11 +308,7 @@ def build_validation_request(diagnostics: DiagnosticService, hypothesis_id: str)
         raise DiagnosticError("provider_privacy_blocked", "Evidence privacy policy blocked")
     # Explicit allowlist: no model_dump of a local hypothesis or evidence object.
     request = {"signal": snapshot["signal"], "evidence_items": snapshot["evidence_items"],
-               "text_coverage": snapshot.get("text_coverage", {"total_evidence_items": len(bundle.items),
-                   "evidence_items_with_feedback": bundle.signal.feedback_count,
-                   "minimized_text_items_allowed": 0,
-                   "text_items_blocked": bundle.signal.feedback_count,
-                   "text_items_with_no_text": len(bundle.items) - bundle.signal.feedback_count}),
+               "text_coverage": snapshot.get("text_coverage", default_text_coverage(bundle)),
                "proposed_diagnosis": proposal,
                "citation_roles": {"supporting_reference_ids": supporting,
                                   "conflicting_reference_ids": conflicting}}

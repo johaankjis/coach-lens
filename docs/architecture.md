@@ -1,6 +1,6 @@
 # Architecture principles
 
-The repository implements deterministic QA analysis (M2), diagnosis and review (M3–M4), and proposed intervention/training orchestration (M5). These ownership boundaries remain in force.
+The repository implements deterministic QA analysis (M2), diagnosis and review (M3–M4), Bedrock diagnosis and semantic evidence review (AWS-1 to AWS-3), intervention reasoning and solution validation downstream of human validation (AWS-4), and proposed intervention/training orchestration (M5). These ownership boundaries remain in force.
 
 ## Deterministic code owns quantitative truth
 
@@ -12,7 +12,7 @@ Models may interpret QA comments, propose root-cause hypotheses, explain evidenc
 
 ## Humans validate consequential decisions
 
-Humans approve or correct diagnoses before M5 design can run. M5 intervention and training artifacts are proposals, not approved decisions. A later alignment/design review must precede consequential use. The workflow retains reviewer corrections alongside the evidence they reviewed.
+Humans approve or correct diagnoses before AWS-4 reasoning and M5 design can run. AWS-4 intervention proposals, AWS-4 solution reviews, and M5 training artifacts are proposals, not approved decisions; a performance problem does not automatically mean training, and only a training or practice proposal whose solution review did not question it reaches the training generator. A later alignment/design review must precede consequential use. The workflow retains reviewer corrections alongside the evidence they reviewed.
 
 ## Evidence lineage
 

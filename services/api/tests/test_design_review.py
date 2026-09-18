@@ -17,7 +17,8 @@ import pytest
 from app.design.demo import DemoDesignFixture
 from app.design.models import (InterventionDecision, NextAction, Objective, REDACTED_REVIEWER,
                                TrainingDesign)
-from app.design.service import DesignError, DesignService, UnavailableDesignProvider
+from app.design.service import (DesignError, DesignService, UnavailableDesignProvider,
+                                design_provider_kind)
 from app.design.validation import InvalidDesignOutput, validate_decision, validate_training
 from app.diagnostics.engine import (ControlledTestReasoner, DiagnosticService, ProviderOutputError,
                                     validate_provider_output)
@@ -242,8 +243,15 @@ def test_provider_input_omits_reviewer_identity_rows_and_lineage():
 # --- Q18: demo safety -------------------------------------------------------------------
 
 def test_normal_startup_installs_no_design_provider():
-    assert isinstance(app.state.designs.intervention, UnavailableDesignProvider)
+    from app.interventions.handoff import ValidatedInterventionHandoff
+    from app.interventions.service import UnavailableInterventionReasoner
+    # AWS-4: the intervention step is the handoff adapter over an unavailable reasoner, so the
+    # installed design providers still classify as unavailable and no AI decision can happen.
+    handoff = app.state.designs.intervention
+    assert isinstance(handoff, ValidatedInterventionHandoff)
+    assert isinstance(handoff.interventions.reasoner, UnavailableInterventionReasoner)
     assert isinstance(app.state.designs.training, UnavailableDesignProvider)
+    assert design_provider_kind(handoff, app.state.designs.training) == "unavailable"
     assert app.state.designs.controlled_fixture is False
 
 

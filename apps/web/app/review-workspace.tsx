@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import DesignWorkspace from "./design-workspace";
+import { EvidenceGroup } from "./evidence-links";
+import InterventionPanel from "./intervention-panel";
 import { isDesignResult, type DesignResult } from "../lib/designs";
+import { isInterventionRecord, type InterventionRecord } from "../lib/interventions";
 import {
   api,
   ApiError,
@@ -45,68 +48,6 @@ function relation(
   )
     return "conflicting";
   return "uncited";
-}
-
-function EvidenceLink({
-  reference,
-  relationName,
-  onSelect,
-}: {
-  reference: EvidenceReference;
-  relationName: string;
-  onSelect: (reference: EvidenceReference) => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="evidence-link"
-      onClick={() => onSelect(reference)}
-    >
-      <span>
-        {reference.item_id === "signal"
-          ? "Aggregate QA signal"
-          : `Evaluation ${shortId(reference.evaluation_id ?? "")}`}
-      </span>
-      <span className="evidence-link-meta">
-        {relationName} <span aria-hidden="true">↗</span>
-      </span>
-    </button>
-  );
-}
-
-function EvidenceGroup({
-  title,
-  references,
-  kind,
-  onSelect,
-}: {
-  title: string;
-  references: EvidenceReference[];
-  kind: string;
-  onSelect: (reference: EvidenceReference) => void;
-}) {
-  return (
-    <section className={`evidence-group ${kind}`} aria-label={title}>
-      <div className="evidence-group-heading">
-        <h4>{title}</h4>
-        <span>{references.length}</span>
-      </div>
-      {references.length ? (
-        <div className="evidence-links">
-          {references.map((reference) => (
-            <EvidenceLink
-              key={reference.item_id}
-              reference={reference}
-              relationName={kind}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="quiet">None cited in this diagnosis.</p>
-      )}
-    </section>
-  );
 }
 
 function DiagnosisBody({
@@ -400,7 +341,9 @@ export default function ReviewWorkspace() {
   const [signalError, setSignalError] = useState<string | null>(null);
   const [designResult, setDesignResult] = useState<DesignResult | null>(null);
   const [evidenceValidation, setEvidenceValidation] = useState<EvidenceValidation | null>(null);
+  const [interventionRecord, setInterventionRecord] = useState<InterventionRecord | null>(null);
   const [designing, setDesigning] = useState(false);
+  const [interventionStep, setInterventionStep] = useState<"propose" | "validate" | null>(null);
   // Async results are applied only to the signal that was selected when the request started.
   const selectedRef = useRef<string | null>(null);
   const recordRef = useRef<string | null>(null);
@@ -423,6 +366,8 @@ export default function ReviewWorkspace() {
   const currentDiagnosis =
     record?.human_revision ?? record?.provider_hypothesis ?? null;
   const currentValidation = evidenceValidation?.hypothesis_id === recordId ? evidenceValidation : null;
+  const currentIntervention = interventionRecord?.hypothesis_id === recordId ? interventionRecord : null;
+  const trainingGate = currentIntervention?.solution_validation ? currentIntervention.handoff.training_design_gate : null;
   const evidenceItem: EvidenceItem | undefined = bundle?.items.find(
     (item) => item.item_id === selectedEvidence?.item_id,
   );
@@ -462,6 +407,7 @@ export default function ReviewWorkspace() {
         setRecordId(hypotheses[0]?.provider_hypothesis.hypothesis_id ?? null);
         setDesignResult(null);
         setEvidenceValidation(null);
+        setInterventionRecord(null);
       })
       .catch((cause) => {
         if (!cancelled) setSignalError((cause as Error).message);
@@ -490,6 +436,11 @@ export default function ReviewWorkspace() {
     let cancelled = false;
     api(`/diagnoses/${encodeURIComponent(id)}`, isDesignResult, undefined, "designs")
       .then((result) => { if (!cancelled && result.diagnosis_id === id) setDesignResult(result); })
+      .catch((cause) => { if (!cancelled && (!(cause instanceof ApiError) || cause.status !== 404)) setError((cause as Error).message); });
+    // A stored AWS-4 record belongs to one validated diagnosis; reload it on selection so the
+    // supervisor never sees a stale proposal or an empty stage for an already-reviewed one.
+    api(`/diagnoses/${encodeURIComponent(id)}`, isInterventionRecord, undefined, "interventions")
+      .then((result) => { if (!cancelled && result.hypothesis_id === id) setInterventionRecord(result); })
       .catch((cause) => { if (!cancelled && (!(cause instanceof ApiError) || cause.status !== 404)) setError((cause as Error).message); });
     return () => { cancelled = true; };
   }, [record]);
@@ -597,6 +548,24 @@ export default function ReviewWorkspace() {
       finish();
     }
   }
+  async function runInterventionStage(step: "propose" | "validate") {
+    if (!record || !validated(record) || !begin()) return;
+    const id = record.provider_hypothesis.hypothesis_id;
+    setInterventionStep(step);
+    try {
+      const result = await api(`/diagnoses/${encodeURIComponent(id)}/${step === "propose" ? "propose" : "validate-solution"}`,
+        isInterventionRecord, { method: "POST" }, "interventions");
+      if (result.hypothesis_id !== id || result.signal_id !== record.provider_hypothesis.signal_id)
+        throw new Error("The intervention response did not match the selected diagnosis.");
+      // A stage that finishes after the reviewer moved on must not render under another diagnosis.
+      if (selectedRef.current === record.provider_hypothesis.signal_id && recordRef.current === id) setInterventionRecord(result);
+    } catch (cause) {
+      if (recordRef.current === id) setError((cause as Error).message);
+    } finally {
+      setInterventionStep(null);
+      finish();
+    }
+  }
   async function validateEvidence() {
     if (!record || !begin()) return;
     const id = record.provider_hypothesis.hypothesis_id;
@@ -653,6 +622,14 @@ export default function ReviewWorkspace() {
             <i>→</i>
             <span>
               03 <b>Validated</b>
+            </span>
+            <i>→</i>
+            <span>
+              04 <b>Intervention</b>
+            </span>
+            <i>→</i>
+            <span>
+              05 <b>Solution</b>
             </span>
           </div>
         </div>
@@ -711,6 +688,7 @@ export default function ReviewWorkspace() {
                         setRecords([]);
                         setRecordId(null);
                         setDesignResult(null);
+                        setInterventionRecord(null);
                         setSelectedEvidence(null);
                         setAction(null);
                         setSelectedId(signal.signal_id);
@@ -863,6 +841,7 @@ export default function ReviewWorkspace() {
                           onChange={(event) => {
                             setRecordId(event.target.value);
                             setDesignResult(null);
+                            setInterventionRecord(null);
                             setSelectedEvidence(null);
                             setAction(null);
                           }}
@@ -1127,9 +1106,26 @@ export default function ReviewWorkspace() {
                                     ).toLocaleString()
                                   : ""}
                               </div>
-                              {!designResult && <>
-                                <div className="ready">READY FOR DESIGN <span>→</span></div>
-                                <p className="design-transition">The diagnosis is ready. Design Intervention asks CoachLens to propose the appropriate response; training has not yet been selected.</p>
+                              {!designResult && <div className="ready">READY FOR DESIGN <span>→</span></div>}
+                              <InterventionPanel
+                                record={currentIntervention}
+                                humanRevised={record.human_revision !== null}
+                                busy={busy}
+                                onPropose={() => void runInterventionStage("propose")}
+                                onValidate={() => void runInterventionStage("validate")}
+                                onSelect={setSelectedEvidence}
+                              />
+                              {interventionStep === "propose" && <p role="status">Proposing intervention…</p>}
+                              {interventionStep === "validate" && <p role="status">Validating the proposed solution…</p>}
+                              {!designResult && trainingGate === "withheld" && (
+                                <p className="design-withheld" role="note">Training design is withheld. The solution review questioned the proposed training, so nothing is handed to the M5 training generator. Revisit the diagnosis or the proposal before designing.</p>
+                              )}
+                              {!designResult && trainingGate !== null && trainingGate !== "withheld" && <>
+                                <p className="design-transition">
+                                  {trainingGate === "permitted"
+                                    ? "Design Intervention hands the validated intervention to M5, which drafts a training outline, activities, and practice for independent alignment review."
+                                    : "Design Intervention records the non-training decision in M5. No training outline, activities, practice, or rubric will be generated."}
+                                </p>
                                 <button type="button" className="button primary" disabled={busy || designing} onClick={() => void designIntervention()}>DESIGN INTERVENTION</button>
                               </>}
                               {designing && <p role="status">Designing intervention and learning experience…</p>}

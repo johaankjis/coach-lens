@@ -418,8 +418,11 @@ def test_real_mode_with_bedrock_installed_blocks_before_aws(monkeypatch):
         demo.install_results_cx_demo(app, evaluations())
         assert isinstance(app.state.diagnostics.reasoner, BedrockReasoner)
         mode = TestClient(app).get("/diagnostics/mode").json()
+        # AWS-4 installs Bedrock intervention providers behind the same switch; the M5 step
+        # that reads their record is therefore a provider, while the training designer is not.
         assert mode == {"mode": "real_results_cx", "diagnostic_provider": "provider",
-                        "remote_diagnosis": "privacy_blocked", "design_provider": "unavailable",
+                        "remote_diagnosis": "privacy_blocked", "design_provider": "provider",
+                        "intervention_provider": "provider", "solution_validator": "provider",
                         "evaluation_count": 2, "signal_count": 2}
         runtime = FakeRuntime()
         app.state.diagnostics.reasoner._client = runtime

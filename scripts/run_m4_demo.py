@@ -13,6 +13,9 @@ from app.diagnostics.engine import DiagnosticService, detect_signals
 from app.diagnostics.evidence_validator import EvidenceValidationService
 from app.design.demo import DemoDesignFixture
 from app.design.service import DesignService
+from app.interventions.demo import DemoInterventionFixture, DemoSolutionFixture
+from app.interventions.handoff import ValidatedInterventionHandoff
+from app.interventions.service import InterventionService
 
 # Settings also read a local `.env`, so check the resolved value rather than the environment
 # alone. Refuse before `app.main` imports, because that import loads the configured records.
@@ -117,6 +120,12 @@ if __name__ == "__main__":
     app.state.evidence_validations = EvidenceValidationService(app.state.diagnostics,
                                                                DemoFixtureEvidenceValidator())
     app.state.demo_mode = "synthetic_demo"
+    # AWS-4: fixed intervention and solution-review fixtures. The M5 intervention step reads
+    # their record through the handoff, so the training fixture only runs when the proposed
+    # intervention is a training or practice type that the solution review did not question.
+    app.state.interventions = InterventionService(app.state.diagnostics, app.state.evidence_validations,
+                                                  DemoInterventionFixture(), DemoSolutionFixture())
     fixture = DemoDesignFixture(resolution_signal_id)
-    app.state.designs = DesignService(app.state.diagnostics, fixture, fixture, controlled_fixture=True)
+    app.state.designs = DesignService(app.state.diagnostics, ValidatedInterventionHandoff(app.state.interventions),
+                                      fixture, controlled_fixture=True)
     uvicorn.run(app, host="127.0.0.1", port=8000)
